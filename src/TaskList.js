@@ -1,7 +1,14 @@
 import TaskItem from "./TaskItem";
 
-export default function TaskList({ tasks, onToggle, onDelete, onEdit }) {
-  if (!tasks.length) return <p className="empty">No tasks</p>;
+export default function TaskList({ tasks, onToggle, onDelete, onEdit, today }) {
+  if (!tasks.length) {
+    return (
+      <div className="empty-state">
+        <p>🎉 No tasks here!</p>
+        <small>Click + to add one</small>
+      </div>
+    );
+  }
 
   return (
     <ul className="task-list">
@@ -12,6 +19,7 @@ export default function TaskList({ tasks, onToggle, onDelete, onEdit }) {
           onToggle={onToggle}
           onDelete={onDelete}
           onEdit={onEdit}
+          today={today}
         />
       ))}
     </ul>
