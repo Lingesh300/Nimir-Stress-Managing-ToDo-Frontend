@@ -60,7 +60,6 @@ export const getTelegramStatus = () =>
     headers: authHeaders(),
   });
 
-
 export const generateTelegramCode = () =>
   fetch(`${BASE_URL}/api/v1/telegram/generate-code`, {
     method: "POST",
