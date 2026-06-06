@@ -582,59 +582,27 @@ body {
 .dark .cancel-btn { background: #334155; border-color: #475569; color: #f1f5f9; }
 .dark .priority-opt { background: #0f172a; border-color: #334155; color: #94a3b8; }
 
-/* ===== RESPONSIVE ===== */
-@media (max-width: 768px) {
-  .app { flex-direction: column; height: auto; min-height: 100vh; overflow: auto; }
-
-  .sidebar {
-    width: 100%;
-    flex-direction: column;
-    padding: 12px 14px;
-    gap: 6px;
-  }
-
-  .nav { flex-direction: row; }
-
-  .nav li {
-    flex: 1;
-    justify-content: center;
-    font-size: 0.78rem;
-    padding: 8px 4px;
-    text-align: center;
-  }
-
-  .nav-label { flex-direction: column; gap: 2px; font-size: 0.72rem; }
-  .sidebar-bottom { flex-direction: row; }
-  .dark-toggle, .logout-btn { flex: 1; }
-  .main { padding: 16px 14px; }
-  .main h1 { font-size: 1.3rem; }
-  .fab { bottom: 18px; right: 18px; width: 48px; height: 48px; font-size: 22px; }
-}
-
-@media (max-width: 480px) {
-  .nav li { font-size: 0.7rem; padding: 6px 2px; }
-  .task-title { font-size: 0.85rem; }
-  .modal { padding: 18px 14px; }
-  .auth-card { padding: 24px 16px; }
-}
+/* =========================================
+   MOBILE / TABLET DRAWER SIDEBAR
+========================================= */
 
 .hamburger-btn {
   display: none;
   position: fixed;
   top: 14px;
   left: 14px;
-  z-index: 200;
+  z-index: 300;
   background: #1e293b;
   color: white;
   border: none;
-  border-radius: 8px;
-  width: 40px;
-  height: 40px;
-  font-size: 18px;
+  border-radius: 10px;
+  width: 44px;
+  height: 44px;
+  font-size: 20px;
   cursor: pointer;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.2);
 }
 
 .close-sidebar-btn {
@@ -643,27 +611,52 @@ body {
   background: transparent;
   border: none;
   color: #94a3b8;
-  font-size: 1rem;
+  font-size: 1.2rem;
   cursor: pointer;
   padding: 4px 8px;
-  border-radius: 6px;
-  width: auto;
-  margin-top: 0;
 }
 
 .sidebar-overlay {
-  display: none;
   position: fixed;
   inset: 0;
   background: rgba(0,0,0,0.5);
-  z-index: 150;
+  z-index: 250;
 }
 
 .sidebar-wrapper {
   display: flex;
 }
 
+/* =========================================
+   DESKTOP
+========================================= */
+
+@media (min-width: 769px) {
+
+  .hamburger-btn,
+  .close-sidebar-btn,
+  .sidebar-overlay {
+    display: none !important;
+  }
+
+  .sidebar-wrapper {
+    position: static;
+    width: auto;
+    left: 0 !important;
+  }
+
+  .sidebar-wrapper .sidebar {
+    width: 240px;
+    height: 100vh;
+  }
+}
+
+/* =========================================
+   MOBILE + TABLET
+========================================= */
+
 @media (max-width: 768px) {
+
   .hamburger-btn {
     display: flex;
   }
@@ -672,19 +665,19 @@ body {
     display: block;
   }
 
-  .sidebar-overlay {
+  .app {
     display: block;
+    min-height: 100vh;
   }
 
   .sidebar-wrapper {
-    display: block;
     position: fixed;
-    left: -260px;
     top: 0;
+    left: -100%;
+    width: min(80vw, 320px);
     height: 100vh;
-    z-index: 160;
+    z-index: 260;
     transition: left 0.3s ease;
-    width: 240px;
   }
 
   .sidebar-wrapper.open {
@@ -692,12 +685,78 @@ body {
   }
 
   .sidebar-wrapper .sidebar {
+    width: min(80vw, 320px);
     height: 100vh;
-    width: 240px;
+    overflow-y: auto;
+    padding-top: 20px;
   }
 
+  .main {
+    width: 100%;
+    padding: 70px 16px 16px;
+  }
+
+  .main h1 {
+    font-size: 1.3rem;
+  }
+
+  .fab {
+    width: 48px;
+    height: 48px;
+    right: 16px;
+    bottom: 16px;
+    font-size: 22px;
+  }
+
+  .modal {
+    width: calc(100vw - 24px);
+    max-width: none;
+  }
+
+  .modal-actions {
+    flex-direction: column;
+  }
+
+  .save-btn,
+  .cancel-btn {
+    width: 100%;
+  }
+}
+
+/* =========================================
+   SMALL PHONES
+========================================= */
+
+@media (max-width: 480px) {
+
+  .sidebar-wrapper {
+    width: 85vw;
+  }
+
+  .sidebar-wrapper .sidebar {
+    width: 85vw;
+  }
 
   .main {
-    padding-top: 60px !important;
+    padding: 70px 12px 12px;
+  }
+
+  .task-item {
+    flex-wrap: wrap;
+  }
+
+  .task-right {
+    width: 100%;
+    justify-content: flex-end;
+    margin-top: 6px;
+  }
+
+  .task-meta {
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .auth-card {
+    padding: 24px 18px;
   }
 }

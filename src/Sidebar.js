@@ -5,6 +5,7 @@ export default function Sidebar({ view, setView, onAdd, onLogout, tasks, today, 
   const [telegramConnected, setTelegramConnected] = useState(false);
   const [telegramCode, setTelegramCode] = useState("");
   const [showSetup, setShowSetup] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   useEffect(() => {
     getTelegramStatus()
@@ -12,6 +13,14 @@ export default function Sidebar({ view, setView, onAdd, onLogout, tasks, today, 
       .then((data) => setTelegramConnected(data.connected))
       .catch(() => {});
   }, []);
+
+useEffect(() => {
+  document.body.style.overflow = mobileOpen ? "hidden" : "";
+
+  return () => {
+    document.body.style.overflow = "";
+  };
+}, [mobileOpen]);
 
   const handleGenerateCode = async () => {
     try {
@@ -30,23 +39,38 @@ export default function Sidebar({ view, setView, onAdd, onLogout, tasks, today, 
     Completed: tasks.filter((t) => t.isCompleted).length,
   };
 
-  return (
-    <aside className="sidebar">
-      <div className="sidebar-top">
-        <div className="sidebar-logo">✊</div>
-        <h2>Nimir</h2>
-      </div>
+  const sidebarContent = (
+  <aside className="sidebar">
 
-      <button className="add-btn" onClick={onAdd}>
-        + New Task
+    <div className="sidebar-top">
+      <span className="sidebar-logo">✊</span>
+
+      <h2>Nimir</h2>
+
+      <button
+        className="close-sidebar-btn"
+        onClick={() => setMobileOpen(false)}
+      >
+        ✕
       </button>
+    </div>
+
+    <button
+      className="add-btn"
+      onClick={() => {
+        onAdd();
+        setMobileOpen(false);
+      }}
+    >
+      + New Task
+    </button>
 
       <ul className="nav">
         {["Today", "Upcoming", "Completed"].map((v) => (
           <li
             key={v}
             className={view === v ? "active" : ""}
-            onClick={() => setView(v)}
+            onClick={() => { setView(v); setMobileOpen(false); }}
           >
             <span className="nav-label">
               {v === "Today" && "📅"}
@@ -59,12 +83,9 @@ export default function Sidebar({ view, setView, onAdd, onLogout, tasks, today, 
         ))}
       </ul>
 
-      {/* ✅ TELEGRAM SECTION */}
       <div className="telegram-section">
         {telegramConnected ? (
-          <div className="telegram-connected">
-            📱 Telegram Connected ✅
-          </div>
+          <div className="telegram-connected">📱 Telegram Connected ✅</div>
         ) : !showSetup ? (
           <button className="telegram-btn" onClick={handleGenerateCode}>
             📱 Connect Telegram
@@ -79,36 +100,17 @@ export default function Sidebar({ view, setView, onAdd, onLogout, tasks, today, 
             </div>
             <div className="code-box">
               <span>{telegramCode}</span>
-              <button
-                className="copy-btn"
-                onClick={() => {
-                  navigator.clipboard.writeText(telegramCode);
-                  alert("Code copied! 📋");
-                }}
-              >
-                📋
-              </button>
+              <button className="copy-btn" onClick={() => { navigator.clipboard.writeText(telegramCode); alert("Code copied! 📋"); }}>📋</button>
             </div>
-            <small className="waiting">
-              ⏳ Waiting for connection...
-            </small>
-            <button
-              className="check-btn"
-              onClick={() => {
-                getTelegramStatus()
-                  .then((res) => res.json())
-                  .then((data) => {
-                    if (data.connected) {
-                      setTelegramConnected(true);
-                      setShowSetup(false);
-                    } else {
-                      alert("Not connected yet — send the code to @nimirToDo_bot first!");
-                    }
-                  });
-              }}
-            >
-              ✅ I sent the code!
-            </button>
+            <small className="waiting">⏳ Waiting for connection...</small>
+            <button className="check-btn" onClick={() => {
+              getTelegramStatus()
+                .then((res) => res.json())
+                .then((data) => {
+                  if (data.connected) { setTelegramConnected(true); setShowSetup(false); }
+                  else alert("Not connected yet — send the code to @nimirToDo_bot first!");
+                });
+            }}>✅ I sent the code!</button>
           </div>
         )}
       </div>
@@ -117,10 +119,33 @@ export default function Sidebar({ view, setView, onAdd, onLogout, tasks, today, 
         <button className="dark-toggle" onClick={() => setDarkMode(!darkMode)}>
           {darkMode ? "☀️ Light Mode" : "🌙 Dark Mode"}
         </button>
-        <button className="logout-btn" onClick={onLogout}>
-          🚪 Logout
-        </button>
+        <button className="logout-btn" onClick={onLogout}>🚪 Logout</button>
       </div>
     </aside>
   );
+
+  return (
+  <>
+    
+    <button
+      className="hamburger-btn"
+      onClick={() => setMobileOpen(true)}
+    >
+      ☰
+    </button>
+
+    
+    {mobileOpen && (
+      <div
+        className="sidebar-overlay"
+        onClick={() => setMobileOpen(false)}
+      />
+    )}
+
+    
+    <div className={`sidebar-wrapper ${mobileOpen ? "open" : ""}`}>
+      {sidebarContent}
+    </div>
+  </>
+);
 }
