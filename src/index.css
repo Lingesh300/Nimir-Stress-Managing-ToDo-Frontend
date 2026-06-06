@@ -660,7 +660,7 @@ body {
 }
 
 .sidebar-wrapper {
-  display: contents;
+  display: flex;
 }
 
 @media (max-width: 768px) {
@@ -696,7 +696,7 @@ body {
     width: 240px;
   }
 
-  /* push main content down on mobile for hamburger */
+
   .main {
     padding-top: 60px !important;
   }
