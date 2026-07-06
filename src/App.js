@@ -23,7 +23,6 @@ export default function App() {
     localStorage.getItem("darkMode") === "true"
   );
 
-  // dark mode apply
   useEffect(() => {
     document.body.classList.toggle("dark", darkMode);
     localStorage.setItem("darkMode", darkMode);
@@ -45,18 +44,17 @@ export default function App() {
     setLoading(false);
   };
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (token) loadTasks();
   }, [token]);
 
-  // ✅ notification permission
   useEffect(() => {
     if ("Notification" in window && Notification.permission === "default") {
       Notification.requestPermission();
     }
   }, []);
 
-  // ✅ notification checker
   useEffect(() => {
     if (!token) return;
     if (Notification.permission !== "granted") return;
@@ -67,13 +65,7 @@ export default function App() {
       const currentTime = now.toTimeString().slice(0, 5);
 
       tasks.forEach((task) => {
-        if (
-          task.isCompleted ||
-          !task.time ||
-          !task.date ||
-          task.date !== currentDate
-        ) return;
-
+        if (task.isCompleted || !task.time || !task.date || task.date !== currentDate) return;
         if (task.time === currentTime) {
           new Notification("⏰ Task Reminder!", {
             body: `${task.title} — ${task.priority?.toUpperCase() || ""} priority`,
@@ -94,7 +86,6 @@ export default function App() {
     setTasks([]);
   };
 
-  // ✅ now accepts email too
   const handleLoginSuccess = (newToken, email) => {
     localStorage.setItem("token", newToken);
     localStorage.setItem("userEmail", email);
@@ -112,44 +103,52 @@ export default function App() {
     setIsModalOpen(true);
   };
 
-  // ✅ cancel button fix — no reload
   const handleCloseModal = () => {
-    setIsModalOpen(false);
+    setIsModalOpen(false); // ✅ no loadTasks = no flash!
   };
 
   const saveTask = async (data) => {
-    try {
-      if (editingTask) {
-        await updateTodo({ ...editingTask, ...data });
-      } else {
-        await createTodo({ ...data, isCompleted: false });
-      }
-      await loadTasks();
-    } catch (err) {
-      console.error("Failed to save task", err);
+    setIsModalOpen(false); // ✅ close instantly!
+
+    if (editingTask) {
+      // ✅ optimistic update — update UI instantly
+      setTasks((prev) =>
+        prev.map((t) =>
+          t.id === editingTask.id ? { ...t, ...data } : t
+        )
+      );
+      await updateTodo({ ...editingTask, ...data });
+    } else {
+      // ✅ optimistic add — add to UI instantly
+      const tempTask = {
+        id: Date.now(), // temp id
+        isCompleted: false,
+        createdAt: Date.now(),
+        userEmail,
+        ...data,
+      };
+      setTasks((prev) => [...prev, tempTask]);
+      await createTodo({ ...data, isCompleted: false });
+      await loadTasks(); // sync real id from backend
     }
-    setIsModalOpen(false);
   };
 
   const toggleComplete = async (task) => {
-    try {
-      await updateTodo({ ...task, isCompleted: !task.isCompleted });
-      await loadTasks();
-    } catch (err) {
-      console.error("Failed to toggle task", err);
-    }
+    // ✅ optimistic toggle — instant UI update!
+    setTasks((prev) =>
+      prev.map((t) =>
+        t.id === task.id ? { ...t, isCompleted: !t.isCompleted } : t
+      )
+    );
+    await updateTodo({ ...task, isCompleted: !task.isCompleted });
   };
 
   const deleteTask = async (id) => {
-    try {
-      await deleteTodo(id);
-      await loadTasks();
-    } catch (err) {
-      console.error("Failed to delete task", err);
-    }
+    // ✅ optimistic delete — instant UI update!
+    setTasks((prev) => prev.filter((t) => t.id !== id));
+    await deleteTodo(id);
   };
 
-  // 🔥 smart sorting
   const priorityOrder = { high: 1, medium: 2, low: 3 };
 
   const isOverdue = (task) =>
@@ -204,7 +203,7 @@ export default function App() {
           </div>
         )}
 
-        {loading ? (
+        {loading && tasks.length === 0 ? (
           <p className="loading">Loading...</p>
         ) : (
           <TaskList

@@ -91,7 +91,7 @@ useEffect(() => {
       <button className="notes-btn" onClick={() => setShowNotes(true)}>
         📝 My Notes
       </button>
-      {showNotes && <Notes onClose={() => setShowNotes(false)} />}
+      {showNotes && <Notes onClose={() => setShowNotes(false)} userEmail={userEmail} />}
 
       <div className="telegram-section">
         {telegramConnected ? (

@@ -993,3 +993,53 @@ body {
 .dark .notes-close-btn:hover {
   background: #334155;
 }
+/* ===== SYNC STATUS ===== */
+.main-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.main-header h1 {
+  margin-bottom: 0;
+}
+
+.sync-badge {
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 999px;
+}
+
+.sync-badge.synced {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.sync-badge.syncing {
+  background: #fef9c3;
+  color: #854d0e;
+}
+
+.sync-badge.pending {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+/* ===== OFFLINE BANNER ===== */
+.offline-banner {
+  background: #f59e0b;
+  color: white;
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  margin-bottom: 14px;
+  text-align: center;
+}
+
+/* task pending sync indicator */
+.task-item.pending-sync {
+  border-left-color: #f59e0b;
+}
