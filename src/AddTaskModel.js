@@ -57,7 +57,7 @@ export default function AddTaskModal({ isOpen, onClose, onSave, existingTask, ta
         />
 
         <label>Description (optional)</label>
-        <input
+        <textarea
           placeholder="Any notes?"
           value={description}
           onChange={(e) => setDescription(e.target.value)}

@@ -29,7 +29,7 @@ export default function Register({ onBack, onLoginSuccess }) {
       const { loginUser } = await import("./api");
       const loginRes = await loginUser(email, password);
       const data = await loginRes.json();
-      onLoginSuccess(data.token);
+      onLoginSuccess(data.token, email);
     } catch (err) {
       setError("Cannot connect to server. Is Spring Boot running?");
     }

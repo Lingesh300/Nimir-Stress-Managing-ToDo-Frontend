@@ -42,7 +42,7 @@ export default function Login({ onLoginSuccess }) {
       }
 
       const data = await res.json();
-      onLoginSuccess(data.token);
+      onLoginSuccess(data.token, email);
     } catch (err) {
       setError("🔌 Cannot connect to server. Is Spring Boot running?");
     }

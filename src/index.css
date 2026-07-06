@@ -1,10 +1,27 @@
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Mono&display=swap');
 
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from { 
+    opacity: 0; 
+    transform: translateY(20px); 
+  }
+  to { 
+    opacity: 1; 
+    transform: translateY(0); 
+  }
+}
+
 * {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
-  font-family: 'DM Sans', system-ui, sans-serif;
+  font-family: 'Inter', system-ui, sans-serif;
 }
 
 body {
@@ -259,10 +276,11 @@ body {
 
 /* ===== TASK LIST ===== */
 .task-list {
-  list-style: none;
+    list-style: none;
   display: flex;
   flex-direction: column;
   gap: 8px;
+  line-height: 1.6; 
 }
 
 .empty-state {
@@ -293,7 +311,7 @@ body {
 }
 
 .task-item.overdue { border-left-color: #ef4444; background: #fff8f8; }
-.task-item.done { opacity: 0.5; }
+.task-item.done { opacity: 0.4; }
 
 .task-item input[type="checkbox"] {
   width: 16px;
@@ -306,12 +324,13 @@ body {
 .task-body { flex: 1; min-width: 0; }
 
 .task-title {
-  font-weight: 600;
-  font-size: 0.9rem;
+  font-weight: 500;        
+  font-size: 0.92rem;
   color: #1e293b;
+  line-height: 1.6;       
 }
 
-.done .task-title { text-decoration: line-through; color: #94a3b8; }
+.done .task-title { text-decoration: none; color: #94a3b8; }
 
 .task-desc { font-size: 0.78rem; color: #64748b; margin-top: 2px; }
 
@@ -394,6 +413,7 @@ body {
   justify-content: center;
   z-index: 100;
   backdrop-filter: blur(2px);
+  animation: fadeIn 0.2s ease;
   padding: 16px;
 }
 
@@ -406,6 +426,7 @@ body {
   box-shadow: 0 20px 60px rgba(0,0,0,0.2);
   display: flex;
   flex-direction: column;
+  animation: slideUp 0.2s ease;
   gap: 7px;
 }
 
@@ -418,6 +439,17 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.5px;
   margin-top: 4px;
+}
+
+.modal textarea {
+  padding: 9px 11px;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  outline: none;
+  transition: border-color 0.2s;
+  width: 100%;
+  min-height: 80px;
 }
 
 .modal input, .modal select {
@@ -578,6 +610,7 @@ body {
 .dark .task-desc { color: #94a3b8; }
 .dark .modal { background: #1e293b; color: #f1f5f9; }
 .dark .modal input { background: #0f172a; border-color: #334155; color: #f1f5f9; }
+.dark .modal textarea { background: #0f172a; border-color: #334155; color: #f1f5f9; }
 .dark .modal label { color: #94a3b8; }
 .dark .cancel-btn { background: #334155; border-color: #475569; color: #f1f5f9; }
 .dark .priority-opt { background: #0f172a; border-color: #334155; color: #94a3b8; }
@@ -697,7 +730,9 @@ body {
   }
 
   .main h1 {
-    font-size: 1.3rem;
+    font-weight: 600;        
+    letter-spacing: -0.5px;
+    line-height: 1.3;
   }
 
   .fab {
@@ -759,4 +794,202 @@ body {
   .auth-card {
     padding: 24px 18px;
   }
+}
+
+.sidebar-logo-img {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  object-fit: cover;
+}
+
+/* ===== LOGGED IN USER ===== */
+.logged-in-user {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #0f172a;
+  padding: 8px 10px;
+  border-radius: 8px;
+  margin: 6px 0;
+}
+
+.user-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #3b82f6;
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.8rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.user-email-text {
+  font-size: 0.75rem;
+  color: #94a3b8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ===== NOTES ===== */
+.notes-btn {
+  background: #1e3a5f;
+  color: #93c5fd;
+  border: 1px solid #2d5a8e;
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  margin-bottom: 8px;
+  transition: all 0.2s;
+  text-align: left;
+  width: 100%;
+}
+
+.notes-btn:hover {
+  background: #1e40af;
+  color: white;
+  border-color: #3b82f6;
+}
+
+.notes-modal {
+  background: white;
+  width: 100%;
+  max-width: 560px;
+  border-radius: 16px;
+  animation: slideUp 0.2s ease;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  max-height: 85vh;
+}
+
+.notes-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.notes-header h3 {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #1e293b;
+}
+
+.notes-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.saved-tag {
+  font-size: 0.78rem;
+  color: #22c55e;
+  font-weight: 600;
+}
+
+.notes-clear-btn {
+  background: transparent;
+  border: 1px solid #fee2e2;
+  color: #ef4444;
+  padding: 5px 10px;
+  border-radius: 6px;
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: all 0.2s;
+  width: auto;
+  margin: 0;
+}
+
+.notes-clear-btn:hover {
+  background: #fee2e2;
+}
+
+.notes-close-btn {
+  background: transparent;
+  border: 1px solid #e2e8f0;
+  color: #64748b;
+  padding: 5px 10px;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all 0.2s;
+  width: auto;
+  margin: 0;
+}
+
+.notes-close-btn:hover {
+  background: #f1f5f9;
+}
+
+.notes-textarea {
+  flex: 1;
+  padding: 16px 20px;
+  border: none;
+  outline: none;
+  font-size: 0.95rem;
+  line-height: 1.7;
+  resize: none;
+  min-height: 320px;
+  color: #1e293b;
+  font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+}
+
+.notes-textarea::placeholder {
+  color: #cbd5e1;
+}
+
+.notes-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  border-top: 1px solid #e2e8f0;
+  background: #f8fafc;
+}
+
+.notes-header small {
+  color: #94a3b8;
+  font-size: 0.78rem;
+}
+
+/* dark mode notes */
+.dark .notes-modal {
+  background: #1e293b;
+}
+
+.dark .notes-header {
+  border-bottom-color: #334155;
+}
+
+.dark .notes-header h3 {
+  color: #f1f5f9;
+}
+
+.dark .notes-textarea {
+  background: #1e293b;
+  color: #f1f5f9;
+}
+
+.dark .notes-footer {
+  background: #0f172a;
+  border-top-color: #334155;
+}
+
+.dark .notes-close-btn {
+  border-color: #334155;
+  color: #94a3b8;
+}
+
+.dark .notes-close-btn:hover {
+  background: #334155;
 }

@@ -6,11 +6,14 @@ import FloatingAddButton from "./FloatingAddButton";
 import AddTaskModal from "./AddTaskModel";
 import Login from "./Login";
 import "./index.css";
- 
+
 export default function App() {
   const today = new Date().toISOString().slice(0, 10);
 
   const [token, setToken] = useState(localStorage.getItem("token"));
+  const [userEmail, setUserEmail] = useState(
+    localStorage.getItem("userEmail") || ""
+  );
   const [view, setView] = useState("Today");
   const [tasks, setTasks] = useState([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -53,7 +56,7 @@ export default function App() {
     }
   }, []);
 
-  // ✅ notification checker — runs every 30 seconds
+  // ✅ notification checker
   useEffect(() => {
     if (!token) return;
     if (Notification.permission !== "granted") return;
@@ -61,7 +64,7 @@ export default function App() {
     const interval = setInterval(() => {
       const now = new Date();
       const currentDate = now.toISOString().slice(0, 10);
-      const currentTime = now.toTimeString().slice(0, 5); // "HH:MM"
+      const currentTime = now.toTimeString().slice(0, 5);
 
       tasks.forEach((task) => {
         if (
@@ -78,20 +81,25 @@ export default function App() {
           });
         }
       });
-    }, 30000); // every 30 seconds for accuracy
+    }, 30000);
 
     return () => clearInterval(interval);
   }, [tasks, token]);
 
   const handleLogout = () => {
     localStorage.removeItem("token");
+    localStorage.removeItem("userEmail");
     setToken(null);
+    setUserEmail("");
     setTasks([]);
   };
 
-  const handleLoginSuccess = (newToken) => {
+  // ✅ now accepts email too
+  const handleLoginSuccess = (newToken, email) => {
     localStorage.setItem("token", newToken);
+    localStorage.setItem("userEmail", email);
     setToken(newToken);
+    setUserEmail(email);
   };
 
   const openAddModal = () => {
@@ -102,6 +110,11 @@ export default function App() {
   const openEditModal = (task) => {
     setEditingTask(task);
     setIsModalOpen(true);
+  };
+
+  // ✅ cancel button fix — no reload
+  const handleCloseModal = () => {
+    setIsModalOpen(false);
   };
 
   const saveTask = async (data) => {
@@ -175,6 +188,7 @@ export default function App() {
         today={today}
         darkMode={darkMode}
         setDarkMode={setDarkMode}
+        userEmail={userEmail}
       />
 
       <main className="main">
@@ -207,7 +221,7 @@ export default function App() {
 
       <AddTaskModal
         isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
+        onClose={handleCloseModal}
         onSave={saveTask}
         existingTask={editingTask}
         tasks={tasks}
@@ -216,4 +230,3 @@ export default function App() {
     </div>
   );
 }
-

@@ -1,11 +1,14 @@
 import { useEffect, useState } from "react";
 import { generateTelegramCode, getTelegramStatus } from "./api";
+import NimirLogo from "./Nimir_Logo.png";
+import Notes from "./Notes";
 
-export default function Sidebar({ view, setView, onAdd, onLogout, tasks, today, darkMode, setDarkMode }) {
+export default function Sidebar({ view, setView, onAdd, onLogout, tasks, today, darkMode, setDarkMode, userEmail }) {
   const [telegramConnected, setTelegramConnected] = useState(false);
   const [telegramCode, setTelegramCode] = useState("");
   const [showSetup, setShowSetup] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [showNotes, setShowNotes] = useState(false);
 
   useEffect(() => {
     getTelegramStatus()
@@ -43,8 +46,11 @@ useEffect(() => {
   <aside className="sidebar">
 
     <div className="sidebar-top">
-      <span className="sidebar-logo">✊</span>
-
+      <img 
+        src={NimirLogo} 
+        alt="Nimir" 
+        className="sidebar-logo-img"
+      />
       <h2>Nimir</h2>
 
       <button
@@ -82,6 +88,10 @@ useEffect(() => {
           </li>
         ))}
       </ul>
+      <button className="notes-btn" onClick={() => setShowNotes(true)}>
+        📝 My Notes
+      </button>
+      {showNotes && <Notes onClose={() => setShowNotes(false)} />}
 
       <div className="telegram-section">
         {telegramConnected ? (
@@ -115,6 +125,19 @@ useEffect(() => {
         )}
       </div>
 
+              {userEmail && (
+          <div className="logged-in-user">
+            <span className="user-avatar">
+              {userEmail.charAt(0).toUpperCase()}
+            </span>
+            <span className="user-email-text">
+              {userEmail.length > 20 
+                ? userEmail.substring(0, 20) + "..." 
+                : userEmail}
+            </span>
+          </div>
+        )}
+  
       <div className="sidebar-bottom">
         <button className="dark-toggle" onClick={() => setDarkMode(!darkMode)}>
           {darkMode ? "☀️ Light Mode" : "🌙 Dark Mode"}
@@ -147,5 +170,6 @@ useEffect(() => {
       {sidebarContent}
     </div>
   </>
+  
 );
 }
