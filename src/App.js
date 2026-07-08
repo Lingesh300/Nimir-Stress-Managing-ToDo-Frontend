@@ -43,7 +43,6 @@ export default function App() {
         if (result && result.tasks) {
           setTasks(result.tasks);
         } else {
-          // Fallback refresh to read the latest from IndexedDB if sync endpoints just complete
           const currentLocal = await getLocalTasks(userEmail);
           setTasks(currentLocal.filter(t => t.syncStatus !== "pending-delete"));
         }
@@ -107,22 +106,18 @@ export default function App() {
     if (token && userEmail) loadTasks();
   }, [token, userEmail, loadTasks]);
 
-  // ===== NOTIFICATIONS =====
   // ==========================================
-  // ⏰ PLATFORM AGNOSTIC NOTIFICATION ENGINE
+  // ⏰ NATIVE OS NOTIFICATION SCHEDULER
   // ==========================================
-  
-  // 1. Request OS Notification Permissions on App Mount
   useEffect(() => {
     if ("Notification" in window && Notification.permission === "default") {
       Notification.requestPermission();
     }
   }, []);
 
-  // 2. Schedule Native Alarms Instead of Resource-Heavy Interval Loops
   useEffect(() => {
     if (!token) return;
-    
+
     const scheduleMobileNotification = (task) => {
       if (!task.time || !task.date || task.isCompleted) return;
 
@@ -130,7 +125,7 @@ export default function App() {
       let taskHours = 0;
       let taskMinutes = 0;
 
-      // Handle 12-Hour conversion variants (AM/PM)
+      // Handle 12-Hour conversion formats (AM/PM)
       if (task.time.toUpperCase().includes("AM") || task.time.toUpperCase().includes("PM")) {
         const cleanTimeStr = task.time.replace(/[^0-9:]/g, "");
         const isPM = task.time.toUpperCase().includes("PM");
@@ -144,36 +139,46 @@ export default function App() {
           taskHours += 12;
         }
       } else {
-        // Handle Standard 24-Hour layouts ("14:30")
+        // Handle Standard 24-Hour fallback split parsing
         const [h, m] = task.time.split(":");
         taskHours = parseInt(h, 10);
         taskMinutes = parseInt(m, 10);
       }
 
-      // Generate exact target timestamp date instance
       const targetDate = new Date(task.date);
       targetDate.setHours(taskHours, taskMinutes, 0, 0);
 
       const delayInMs = targetDate.getTime() - now.getTime();
 
-      // Pass the precise timestamp delta to your SW background daemon thread
-      if (delayInMs > 0 && navigator.serviceWorker && navigator.serviceWorker.controller) {
-        navigator.serviceWorker.controller.postMessage({
-          type: "SCHEDULE_REMINDER",
-          title: "⏰ Task Reminder!",
-          body: `${task.title} — ${task.priority?.toUpperCase() || ""} priority`,
-          delay: delayInMs,
-          tag: `task-${task.id}`
-        });
+      if (delayInMs > 0) {
+        if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+          // Send intent directly to the OS via Service Worker (Works Offline!)
+          navigator.serviceWorker.controller.postMessage({
+            type: "SCHEDULE_REMINDER",
+            title: "⏰ Task Reminder!",
+            body: `${task.title} — ${task.priority?.toUpperCase() || ""} priority`,
+            delay: delayInMs,
+            tag: `task-${task.id}`
+          });
+        } else {
+          // Safe Local Timeout Fallback for standard browsers
+          setTimeout(() => {
+            new Notification("⏰ Task Reminder!", {
+              body: `${task.title} — ${task.priority?.toUpperCase() || ""} priority`,
+              icon: "/favicon.ico",
+              tag: `task-${task.id}`,
+              requireInteraction: true
+            });
+          }, delayInMs);
+        }
       }
     };
 
-    // Recalculate background alarm triggers automatically whenever tasks change
     if (tasks.length > 0) {
       tasks.forEach(task => scheduleMobileNotification(task));
     }
   }, [tasks, token]);
-  
+
   // ===== AUTH =====
   const handleLogout = () => {
     localStorage.removeItem("token");
@@ -210,7 +215,7 @@ export default function App() {
     setIsModalOpen(false);
 
     if (editingTask) {
-      const updated = { ...editingTask, ...data };
+      const updated = { ...editingTask, ...data, userEmail };
       setTasks((prev) =>
         prev.map((t) => (t.id === editingTask.id ? updated : t))
       );
@@ -233,16 +238,14 @@ export default function App() {
         ...data,
       };
 
-      // Optimistic Add
       setTasks((prev) => [...prev, newTask]);
       await addTaskLocally(newTask, userEmail);
 
       if (isOnline) {
         try {
-          const res = await createTodo({ ...data, isCompleted: false });
+          const res = await createTodo({ ...data, isCompleted: false, userEmail });
           const saved = await res.json();
           
-          // Fix race conditions by computing state variables functionally 
           setTasks((prev) => {
             const updatedState = prev.map((t) => (t.id === tempId ? { ...saved, syncStatus: "synced" } : t));
             saveTasksLocally(updatedState, userEmail);
@@ -258,7 +261,7 @@ export default function App() {
   };
 
   const toggleComplete = async (task) => {
-    const updated = { ...task, isCompleted: !task.isCompleted };
+    const updated = { ...task, isCompleted: !task.isCompleted, userEmail };
     setTasks((prev) =>
       prev.map((t) => (t.id === task.id ? updated : t))
     );
