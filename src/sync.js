@@ -1,83 +1,9 @@
-import {
-  getPendingTasks,
-  markTaskSynced,
-  removeLocalTask,
-  saveTasksLocally,
-  getLocalNote, 
-  saveNoteLocally
-} from "./db";
-import { createTodo, updateTodo, deleteTodo, fetchTodos, saveNotesToBackend, fetchNotes } from "./api";
+import { getPendingTasks, markTaskSynced, removeLocalTask, saveTasksLocally, getLocalNote, saveNoteLocally } from "./db";
+import { createTodo, updateTodo, deleteTodo, fetchTodos, saveNotesToBackend } from "./api";
 
-// sync pending local changes to backend
+// 1. Core Synchronization Process (Handles BOTH Tasks and Notes)
 export const syncPendingTasks = async (userEmail) => {
-  const pending = await getPendingTasks();
-
-  if (pending.length === 0) return { synced: 0 };
-
-  let syncedCount = 0;
-
-  for (const task of pending) {
-    try {
-      if (task.syncStatus === "pending-add") {
-        // send to backend
-        const res = await createTodo({
-          title: task.title,
-          description: task.description,
-          date: task.date,
-          time: task.time,
-          priority: task.priority,
-          isCompleted: task.isCompleted,
-        });
-        const saved = await res.json();
-        // replace local id with server id
-        await markTaskSynced(task.id, saved.id);
-        syncedCount++;
-
-      } else if (task.syncStatus === "pending-update") {
-        await updateTodo({
-          id: task.id,
-          title: task.title,
-          description: task.description,
-          date: task.date,
-          time: task.time,
-          priority: task.priority,
-          isCompleted: task.isCompleted,
-          userEmail: task.userEmail,
-        });
-        await markTaskSynced(task.id, task.id);
-        syncedCount++;
-
-      } else if (task.syncStatus === "pending-delete") {
-        await deleteTodo(task.id);
-        await removeLocalTask(task.id);
-        syncedCount++;
-      }
-    } catch (err) {
-      console.log("sync failed for task:", task.id, err);
-      // keep as pending → retry next time
-    }
-  }
-
-  // after sync → pull latest from server
-  try {
-    const res = await fetchTodos();
-    const serverTasks = await res.json();
-    await saveTasksLocally(serverTasks, userEmail);
-    return { synced: syncedCount, tasks: serverTasks };
-  } catch (err) {
-    return { synced: syncedCount };
-  }
-};
-
-// pull latest tasks from server
-export const pullTasksFromServer = async (userEmail) => {
-  const res = await fetchTodos();
-  const tasks = await res.json();
-  await saveTasksLocally(tasks, userEmail);
-  return tasks;
-};
-
-export const syncPendingNotes = async (userEmail) => {
+  // --- PART A: SYNC NOTES FIRST ---
   try {
     const localNote = await getLocalNote(userEmail);
     if (localNote && localNote.syncStatus === "pending-update") {
@@ -87,11 +13,79 @@ export const syncPendingNotes = async (userEmail) => {
       };
       await saveNotesToBackend(payload);
       
-      // Mark as clean down in the local cache
+      // Mark notes clean in local IndexedDB
       localNote.syncStatus = "synced";
       await saveNoteLocally(userEmail, localNote.notes);
     }
-  } catch (err) {
-    console.error("Background notes sync process execution halted", err);
+  } catch (noteErr) {
+    console.error("Background notes sync execution halted:", noteErr);
   }
+
+  // --- PART B: SYNC TASKS ---
+  const pending = await getPendingTasks();
+  
+  if (pending.length === 0) {
+    // If no offline task changes, just pull down the latest web state
+    try {
+      const res = await fetchTodos();
+      const serverTasks = await res.json();
+      await saveTasksLocally(serverTasks, userEmail);
+      return { synced: 0, tasks: serverTasks };
+    } catch {
+      return { synced: 0 };
+    }
+  }
+
+  let syncedCount = 0;
+
+  for (const task of pending) {
+    try {
+      if (task.syncStatus === "pending-add") {
+        // Strip out local metadata before pushing to Spring Boot
+        const { id, syncStatus, ...taskPayload } = task; 
+        
+        const res = await createTodo(taskPayload);
+        if (res.ok) {
+          const savedFromServer = await res.json();
+          await markTaskSynced(task.id, savedFromServer.id);
+          syncedCount++;
+        }
+
+      } else if (task.syncStatus === "pending-update") {
+        const res = await updateTodo(task);
+        if (res.ok) {
+          await markTaskSynced(task.id, task.id);
+          syncedCount++;
+        }
+
+      } else if (task.syncStatus === "pending-delete") {
+        const res = await deleteTodo(task.id);
+        if (res.ok) {
+          await removeLocalTask(task.id);
+          syncedCount++;
+        }
+      }
+    } catch (err) {
+      console.error("Failed to sync individual offline task:", task.id, err);
+    }
+  }
+
+  // --- PART C: FINAL PRISTINE CLOUD RECONCILIATION ---
+  try {
+    const res = await fetchTodos();
+    const serverTasks = await res.json();
+    await saveTasksLocally(serverTasks, userEmail);
+    return { synced: syncedCount, tasks: serverTasks };
+  } catch (err) {
+    console.error("Post-sync server pull failed:", err);
+    return { synced: syncedCount };
+  }
+};
+
+// 2. Pure Web-to-App Pull Down Fallback
+export const pullTasksFromServer = async (userEmail) => {
+  const res = await fetchTodos();
+  const tasks = await res.json();
+  await saveTasksLocally(tasks, userEmail);
+  return tasks;
 };

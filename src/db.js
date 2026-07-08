@@ -3,6 +3,7 @@
 const DB_NAME = "nimir-db";
 const DB_VERSION = 1;
 const STORE_NAME = "tasks";
+const NOTES_STORE_NAME = "notes_sync"; // ✅ Grouped store names at the top
 
 // open database
 const openDB = () => {
@@ -10,11 +11,18 @@ const openDB = () => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
 
     request.onupgradeneeded = (event) => {
-      const db = event.target.result;
-      if (!db.objectStoreNames.contains(STORE_NAME)) {
-        const store = db.createObjectStore(STORE_NAME, { keyPath: "id" });
+      const dbInstance = event.target.result;
+      
+      // Handle Tasks Object Store
+      if (!dbInstance.objectStoreNames.contains(STORE_NAME)) {
+        const store = dbInstance.createObjectStore(STORE_NAME, { keyPath: "id" });
         store.createIndex("userEmail", "userEmail", { unique: false });
         store.createIndex("syncStatus", "syncStatus", { unique: false });
+      }
+
+      // ✅ FIXED: Notes store generation handled inside correct lifecycle hook scope!
+      if (!dbInstance.objectStoreNames.contains(NOTES_STORE_NAME)) {
+        dbInstance.createObjectStore(NOTES_STORE_NAME, { keyPath: "userEmail" });
       }
     };
 
@@ -29,20 +37,17 @@ export const saveTasksLocally = async (tasks, userEmail) => {
   const tx = db.transaction(STORE_NAME, "readwrite");
   const store = tx.objectStore(STORE_NAME);
 
-  // clear existing synced tasks for this user
   const index = store.index("userEmail");
   const request = index.getAll(userEmail);
 
   return new Promise((resolve, reject) => {
     request.onsuccess = () => {
       const existing = request.result;
-      // delete synced ones (keep pending)
       existing.forEach((task) => {
         if (task.syncStatus === "synced") {
           store.delete(task.id);
         }
       });
-      // add fresh from server
       tasks.forEach((task) => {
         store.put({ ...task, syncStatus: "synced" });
       });
@@ -110,17 +115,14 @@ export const deleteTaskLocally = async (id) => {
   const tx = db.transaction(STORE_NAME, "readwrite");
   const store = tx.objectStore(STORE_NAME);
 
-  // mark as pending delete instead of removing
   return new Promise((resolve, reject) => {
     const getRequest = store.get(id);
     getRequest.onsuccess = () => {
       const task = getRequest.result;
       if (task) {
         if (String(task.id).startsWith("local-")) {
-          // never synced → just remove
           store.delete(id);
         } else {
-          // synced before → mark for deletion
           store.put({ ...task, syncStatus: "pending-delete" });
         }
       }
@@ -165,9 +167,7 @@ export const markTaskSynced = async (localId, serverId) => {
     getRequest.onsuccess = () => {
       const task = getRequest.result;
       if (task) {
-        // delete old local entry
         store.delete(localId);
-        // save with real server id
         store.put({
           ...task,
           id: serverId || localId,
@@ -193,13 +193,9 @@ export const removeLocalTask = async (id) => {
   });
 };
 
-const NOTES_STORE_NAME = "notes_sync";
-
-// Update openDB inside db.js to register this store if it doesn't exist
-// Inside your request.onupgradeneeded:
-if (!db.objectStoreNames.contains(NOTES_STORE_NAME)) {
-  db.createObjectStore(NOTES_STORE_NAME, { keyPath: "userEmail" });
-}
+// ==========================================
+// 📝 NOTES SYNC READ / WRITE LAYERS
+// ==========================================
 
 // 1. Write note locally with sync flags
 export const saveNoteLocally = async (userEmail, notesText) => {
@@ -214,7 +210,11 @@ export const saveNoteLocally = async (userEmail, notesText) => {
     updatedAt: Date.now()
   };
   
-  await store.put(record);
+  return new Promise((resolve, reject) => {
+    store.put(record);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
 };
 
 // 2. Read note locally
@@ -222,5 +222,10 @@ export const getLocalNote = async (userEmail) => {
   const db = await openDB();
   const tx = db.transaction(NOTES_STORE_NAME, "readonly");
   const store = tx.objectStore(NOTES_STORE_NAME);
-  return await store.get(userEmail);
+  
+  return new Promise((resolve, reject) => {
+    const request = store.get(userEmail);
+    request.onsuccess = () => resolve(request.result || null);
+    request.onerror = () => reject(request.error);
+  });
 };

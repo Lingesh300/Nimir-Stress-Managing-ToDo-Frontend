@@ -8,20 +8,20 @@ export default function AddTaskModal({ isOpen, onClose, onSave, existingTask, ta
   const [priority, setPriority] = useState("medium");
 
   useEffect(() => {
-    if (existingTask) {
-      setTitle(existingTask.title || "");
-      setDescription(existingTask.description || "");
-      setDate(existingTask.date || today);
-      setTime(existingTask.time || "");
-      setPriority(existingTask.priority || "medium");
-    } else {
-      setTitle("");
-      setDescription("");
-      setDate(today);
-      setTime("");
-      setPriority("medium");
-    }
-  }, [existingTask, isOpen]);
+  if (existingTask) {
+    setTitle(existingTask.title || "");
+    setDescription(existingTask.description || "");
+    setDate(existingTask.date || today);
+    setTime(existingTask.time || "");
+    setPriority(existingTask.priority || "medium");
+  } else {
+    setTitle("");
+    setDescription("");
+    setDate(today);
+    setTime("");
+    setPriority("medium");
+  }
+}, [existingTask, isOpen, today]);
 
   if (!isOpen) return null;
 
