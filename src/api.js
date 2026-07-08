@@ -66,3 +66,16 @@ export const generateTelegramCode = () =>
     headers: authHeaders(),
   });
 
+  // Add these to your existing api.js file
+
+export const fetchNotes = (userEmail) =>
+  fetch(`${BASE_URL}/api/v1/notes`, {
+    headers: authHeaders(),
+  });
+  
+export const saveNotesToBackend = (notePayload) =>
+  fetch(`${BASE_URL}/api/v1/notes`, {
+    method: "POST",
+    headers: authHeaders(),
+    body: JSON.stringify(notePayload),
+  });

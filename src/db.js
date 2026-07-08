@@ -192,3 +192,35 @@ export const removeLocalTask = async (id) => {
     request.onerror = () => reject(request.error);
   });
 };
+
+const NOTES_STORE_NAME = "notes_sync";
+
+// Update openDB inside db.js to register this store if it doesn't exist
+// Inside your request.onupgradeneeded:
+if (!db.objectStoreNames.contains(NOTES_STORE_NAME)) {
+  db.createObjectStore(NOTES_STORE_NAME, { keyPath: "userEmail" });
+}
+
+// 1. Write note locally with sync flags
+export const saveNoteLocally = async (userEmail, notesText) => {
+  const db = await openDB();
+  const tx = db.transaction(NOTES_STORE_NAME, "readwrite");
+  const store = tx.objectStore(NOTES_STORE_NAME);
+  
+  const record = {
+    userEmail,
+    notes: notesText,
+    syncStatus: "pending-update",
+    updatedAt: Date.now()
+  };
+  
+  await store.put(record);
+};
+
+// 2. Read note locally
+export const getLocalNote = async (userEmail) => {
+  const db = await openDB();
+  const tx = db.transaction(NOTES_STORE_NAME, "readonly");
+  const store = tx.objectStore(NOTES_STORE_NAME);
+  return await store.get(userEmail);
+};

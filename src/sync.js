@@ -3,8 +3,10 @@ import {
   markTaskSynced,
   removeLocalTask,
   saveTasksLocally,
+  getLocalNote, 
+  saveNoteLocally
 } from "./db";
-import { createTodo, updateTodo, deleteTodo, fetchTodos } from "./api";
+import { createTodo, updateTodo, deleteTodo, fetchTodos, saveNotesToBackend, fetchNotes } from "./api";
 
 // sync pending local changes to backend
 export const syncPendingTasks = async (userEmail) => {
@@ -73,4 +75,23 @@ export const pullTasksFromServer = async (userEmail) => {
   const tasks = await res.json();
   await saveTasksLocally(tasks, userEmail);
   return tasks;
+};
+
+export const syncPendingNotes = async (userEmail) => {
+  try {
+    const localNote = await getLocalNote(userEmail);
+    if (localNote && localNote.syncStatus === "pending-update") {
+      const payload = {
+        notes: localNote.notes,
+        userEmail: userEmail
+      };
+      await saveNotesToBackend(payload);
+      
+      // Mark as clean down in the local cache
+      localNote.syncStatus = "synced";
+      await saveNoteLocally(userEmail, localNote.notes);
+    }
+  } catch (err) {
+    console.error("Background notes sync process execution halted", err);
+  }
 };

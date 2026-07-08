@@ -34,6 +34,7 @@ export default function Notes({ onClose, userEmail }) {
         <div className="notes-header">
           <h3>📝 My Notes</h3>
           <div className="notes-actions">
+            <small>{note.length} characters</small>
             {saved && <span className="saved-tag">✅ Saved!</span>}
             <button className="notes-clear-btn" onClick={handleClear}>
               🗑️ Clear
@@ -51,7 +52,6 @@ export default function Notes({ onClose, userEmail }) {
         />
 
         <div className="notes-footer">
-          <small>{note.length} characters</small>
           <button className="save-btn" onClick={handleSave}>💾 Save</button>
         </div>
       </div>

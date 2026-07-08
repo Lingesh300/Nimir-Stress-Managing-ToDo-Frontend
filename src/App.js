@@ -1,5 +1,13 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { fetchTodos, createTodo, updateTodo, deleteTodo } from "./api";
+import {
+  getLocalTasks,
+  saveTasksLocally,
+  addTaskLocally,
+  updateTaskLocally,
+  deleteTaskLocally,
+} from "./db";
+import { syncPendingTasks } from "./sync";
 import Sidebar from "./Sidebar";
 import TaskList from "./TaskList";
 import FloatingAddButton from "./FloatingAddButton";
@@ -22,33 +30,84 @@ export default function App() {
   const [darkMode, setDarkMode] = useState(
     localStorage.getItem("darkMode") === "true"
   );
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [syncStatus, setSyncStatus] = useState("synced");
 
+  // ===== ONLINE/OFFLINE DETECTION & AUTOMATIC UI STATE SYNC =====
+  useEffect(() => {
+    const handleOnline = async () => {
+      setIsOnline(true);
+      setSyncStatus("syncing");
+      try {
+        const result = await syncPendingTasks(userEmail);
+        if (result && result.tasks) {
+          setTasks(result.tasks);
+        } else {
+          // Fallback refresh to read the latest from IndexedDB if sync endpoints just complete
+          const currentLocal = await getLocalTasks(userEmail);
+          setTasks(currentLocal.filter(t => t.syncStatus !== "pending-delete"));
+        }
+        setSyncStatus("synced");
+      } catch (err) {
+        console.error("Online synchronization processing failed", err);
+        setSyncStatus("pending");
+      }
+    };
+
+    const handleOffline = () => {
+      setIsOnline(false);
+      setSyncStatus("pending");
+    };
+
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, [userEmail]);
+
+  // ===== DARK MODE =====
   useEffect(() => {
     document.body.classList.toggle("dark", darkMode);
     localStorage.setItem("darkMode", darkMode);
   }, [darkMode]);
 
-  const loadTasks = async () => {
+  // ===== LOAD TASKS =====
+  const loadTasks = useCallback(async () => {
     setLoading(true);
-    try {
-      const res = await fetchTodos();
-      if (res.status === 403 || res.status === 401) {
-        handleLogout();
-        return;
+    const localTasks = await getLocalTasks(userEmail);
+    if (localTasks.length > 0) {
+      setTasks(localTasks.filter(t => t.syncStatus !== "pending-delete"));
+      setLoading(false);
+    }
+
+    if (navigator.onLine) {
+      try {
+        const res = await fetchTodos();
+        if (res.status === 403 || res.status === 401) {
+          handleLogout();
+          return;
+        }
+        const serverTasks = await res.json();
+        await saveTasksLocally(serverTasks, userEmail);
+        setTasks(serverTasks);
+        setSyncStatus("synced");
+      } catch (err) {
+        console.error("Failed to fetch from server", err);
+        setSyncStatus("pending");
       }
-      const data = await res.json();
-      setTasks(data);
-    } catch (err) {
-      console.error("Failed to load tasks", err);
+    } else {
+      setSyncStatus("pending");
     }
     setLoading(false);
-  };
+  }, [userEmail]);
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
-    if (token) loadTasks();
-  }, [token]);
+    if (token && userEmail) loadTasks();
+  }, [token, userEmail, loadTasks]);
 
+  // ===== NOTIFICATIONS =====
   useEffect(() => {
     if ("Notification" in window && Notification.permission === "default") {
       Notification.requestPermission();
@@ -56,28 +115,61 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!token) return;
-    if (Notification.permission !== "granted") return;
+  if (!token) return;
+  if (Notification.permission !== "granted") return;
 
-    const interval = setInterval(() => {
-      const now = new Date();
-      const currentDate = now.toISOString().slice(0, 10);
-      const currentTime = now.toTimeString().slice(0, 5);
+  const interval = setInterval(() => {
+    const now = new Date();
+    const currentDate = now.toISOString().slice(0, 10);
+    
+    // Exact structural integers from system clock source
+    const systemHours = now.getHours();
+    const systemMinutes = now.getMinutes();
 
-      tasks.forEach((task) => {
-        if (task.isCompleted || !task.time || !task.date || task.date !== currentDate) return;
-        if (task.time === currentTime) {
-          new Notification("⏰ Task Reminder!", {
-            body: `${task.title} — ${task.priority?.toUpperCase() || ""} priority`,
-            icon: "/favicon.ico",
-          });
+    tasks.forEach((task) => {
+      if (task.isCompleted || !task.time || !task.date || task.date !== currentDate) return;
+      
+      let taskHours = 0;
+      let taskMinutes = 0;
+
+      // 1. Check if the task time string contains 12-hour markers (AM/PM)
+      if (task.time.toUpperCase().includes("AM") || task.time.toUpperCase().includes("PM")) {
+        // Formats like: "09:30 PM", "9:30 PM", "3:15 AM"
+        const cleanTimeStr = task.time.replace(/[^0-9:]/g, ""); // extracts "09:30"
+        const isPM = task.time.toUpperCase().includes("PM");
+        
+        const [h, m] = cleanTimeStr.split(":");
+        taskHours = parseInt(h, 10);
+        taskMinutes = parseInt(m, 10);
+
+        if (taskHours === 12) {
+          taskHours = isPM ? 12 : 0;
+        } else if (isPM) {
+          taskHours += 12;
         }
-      });
-    }, 30000);
+      } else {
+        // 2. Standard 24-hour format matching layout: "21:30", "09:30"
+        const [h, m] = task.time.split(":");
+        taskHours = parseInt(h, 10);
+        taskMinutes = parseInt(m, 10);
+      }
 
-    return () => clearInterval(interval);
-  }, [tasks, token]);
+      // Final mathematical evaluation check completely bypassed string format mismatches!
+      if (taskHours === systemHours && taskMinutes === systemMinutes) {
+        new Notification("⏰ Task Reminder!", {
+          body: `${task.title} — ${task.priority?.toUpperCase() || ""} priority`,
+          icon: "/favicon.ico",
+          tag: `task-${task.id}-${taskHours}:${taskMinutes}`, // Prevents duplicate fires within the same minute
+          requireInteraction: true
+        });
+      }
+    });
+  }, 30000); // Evaluates every 30 seconds
 
+  return () => clearInterval(interval);
+}, [tasks, token]);
+
+  // ===== AUTH =====
   const handleLogout = () => {
     localStorage.removeItem("token");
     localStorage.removeItem("userEmail");
@@ -93,6 +185,7 @@ export default function App() {
     setUserEmail(email);
   };
 
+  // ===== MODAL =====
   const openAddModal = () => {
     setEditingTask(null);
     setIsModalOpen(true);
@@ -104,58 +197,94 @@ export default function App() {
   };
 
   const handleCloseModal = () => {
-    setIsModalOpen(false); // ✅ no loadTasks = no flash!
+    setIsModalOpen(false);
   };
 
+  // ===== TASK OPERATIONS =====
   const saveTask = async (data) => {
-    setIsModalOpen(false); // ✅ close instantly!
+    setIsModalOpen(false);
 
     if (editingTask) {
-      // ✅ optimistic update — update UI instantly
+      const updated = { ...editingTask, ...data };
       setTasks((prev) =>
-        prev.map((t) =>
-          t.id === editingTask.id ? { ...t, ...data } : t
-        )
+        prev.map((t) => (t.id === editingTask.id ? updated : t))
       );
-      await updateTodo({ ...editingTask, ...data });
+      await updateTaskLocally(updated);
+      if (isOnline) {
+        await updateTodo(updated);
+        setTasks((prev) =>
+          prev.map((t) => (t.id === editingTask.id ? { ...updated, syncStatus: "synced" } : t))
+        );
+      } else {
+        setSyncStatus("pending");
+      }
     } else {
-      // ✅ optimistic add — add to UI instantly
-      const tempTask = {
-        id: Date.now(), // temp id
+      const tempId = `local-${Date.now()}`;
+      const newTask = {
+        id: tempId,
         isCompleted: false,
-        createdAt: Date.now(),
         userEmail,
+        syncStatus: "pending-add",
         ...data,
       };
-      setTasks((prev) => [...prev, tempTask]);
-      await createTodo({ ...data, isCompleted: false });
-      await loadTasks(); // sync real id from backend
+
+      // Optimistic Add
+      setTasks((prev) => [...prev, newTask]);
+      await addTaskLocally(newTask, userEmail);
+
+      if (isOnline) {
+        try {
+          const res = await createTodo({ ...data, isCompleted: false });
+          const saved = await res.json();
+          
+          // Fix race conditions by computing state variables functionally 
+          setTasks((prev) => {
+            const updatedState = prev.map((t) => (t.id === tempId ? { ...saved, syncStatus: "synced" } : t));
+            saveTasksLocally(updatedState, userEmail);
+            return updatedState;
+          });
+        } catch (err) {
+          setSyncStatus("pending");
+        }
+      } else {
+        setSyncStatus("pending");
+      }
     }
   };
 
   const toggleComplete = async (task) => {
-    // ✅ optimistic toggle — instant UI update!
+    const updated = { ...task, isCompleted: !task.isCompleted };
     setTasks((prev) =>
-      prev.map((t) =>
-        t.id === task.id ? { ...t, isCompleted: !t.isCompleted } : t
-      )
+      prev.map((t) => (t.id === task.id ? updated : t))
     );
-    await updateTodo({ ...task, isCompleted: !task.isCompleted });
+    await updateTaskLocally(updated);
+    if (isOnline) {
+      await updateTodo(updated);
+      setTasks((prev) =>
+        prev.map((t) => (t.id === task.id ? { ...updated, syncStatus: "synced" } : t))
+      );
+    } else {
+      setSyncStatus("pending");
+    }
   };
 
   const deleteTask = async (id) => {
-    // ✅ optimistic delete — instant UI update!
     setTasks((prev) => prev.filter((t) => t.id !== id));
-    await deleteTodo(id);
+    await deleteTaskLocally(id);
+    if (isOnline) {
+      await deleteTodo(id);
+    } else {
+      setSyncStatus("pending");
+    }
   };
 
+  // ===== SORTING =====
   const priorityOrder = { high: 1, medium: 2, low: 3 };
-
-  const isOverdue = (task) =>
-    !task.isCompleted && task.date && task.date < today;
+  const isOverdue = (task) => !task.isCompleted && task.date && task.date < today;
 
   const filteredTasks = tasks
     .filter((t) => {
+      if (t.syncStatus === "pending-delete") return false;
       if (view === "Completed") return t.isCompleted;
       if (view === "Upcoming") return !t.isCompleted && t.date > today;
       return !t.isCompleted && (!t.date || t.date <= today);
@@ -191,15 +320,29 @@ export default function App() {
       />
 
       <main className="main">
-        <h1>
-          {view === "Today" && "Today's Tasks"}
-          {view === "Upcoming" && "Upcoming Tasks"}
-          {view === "Completed" && "Completed Tasks"}
-        </h1>
+        <div className="main-header">
+          <h1>
+            {view === "Today" && "Today's Tasks"}
+            {view === "Upcoming" && "Upcoming Tasks"}
+            {view === "Completed" && "Completed Tasks"}
+          </h1>
+
+          <div className={`sync-badge ${syncStatus}`}>
+            {syncStatus === "synced" && "✅ Synced"}
+            {syncStatus === "syncing" && "🔄 Syncing..."}
+            {syncStatus === "pending" && "📡 Offline"}
+          </div>
+        </div>
 
         {view === "Today" && filteredTasks.some(isOverdue) && (
           <div className="overdue-warning">
             ⚠️ You have overdue tasks — finish them first!
+          </div>
+        )}
+
+        {!isOnline && (
+          <div className="offline-banner">
+            📡 You're offline — changes will sync when back online
           </div>
         )}
 
