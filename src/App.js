@@ -108,36 +108,32 @@ export default function App() {
   }, [token, userEmail, loadTasks]);
 
   // ===== NOTIFICATIONS =====
+  // ==========================================
+  // ⏰ PLATFORM AGNOSTIC NOTIFICATION ENGINE
+  // ==========================================
+  
+  // 1. Request OS Notification Permissions on App Mount
   useEffect(() => {
     if ("Notification" in window && Notification.permission === "default") {
       Notification.requestPermission();
     }
   }, []);
 
+  // 2. Schedule Native Alarms Instead of Resource-Heavy Interval Loops
   useEffect(() => {
-  if (!token) return;
-  if (Notification.permission !== "granted") return;
-
-  const interval = setInterval(() => {
-    const now = new Date();
-    const currentDate = now.toISOString().slice(0, 10);
+    if (!token) return;
     
-    // Exact structural integers from system clock source
-    const systemHours = now.getHours();
-    const systemMinutes = now.getMinutes();
+    const scheduleMobileNotification = (task) => {
+      if (!task.time || !task.date || task.isCompleted) return;
 
-    tasks.forEach((task) => {
-      if (task.isCompleted || !task.time || !task.date || task.date !== currentDate) return;
-      
+      const now = new Date();
       let taskHours = 0;
       let taskMinutes = 0;
 
-      // 1. Check if the task time string contains 12-hour markers (AM/PM)
+      // Handle 12-Hour conversion variants (AM/PM)
       if (task.time.toUpperCase().includes("AM") || task.time.toUpperCase().includes("PM")) {
-        // Formats like: "09:30 PM", "9:30 PM", "3:15 AM"
-        const cleanTimeStr = task.time.replace(/[^0-9:]/g, ""); // extracts "09:30"
+        const cleanTimeStr = task.time.replace(/[^0-9:]/g, "");
         const isPM = task.time.toUpperCase().includes("PM");
-        
         const [h, m] = cleanTimeStr.split(":");
         taskHours = parseInt(h, 10);
         taskMinutes = parseInt(m, 10);
@@ -148,27 +144,36 @@ export default function App() {
           taskHours += 12;
         }
       } else {
-        // 2. Standard 24-hour format matching layout: "21:30", "09:30"
+        // Handle Standard 24-Hour layouts ("14:30")
         const [h, m] = task.time.split(":");
         taskHours = parseInt(h, 10);
         taskMinutes = parseInt(m, 10);
       }
 
-      // Final mathematical evaluation check completely bypassed string format mismatches!
-      if (taskHours === systemHours && taskMinutes === systemMinutes) {
-        new Notification("⏰ Task Reminder!", {
+      // Generate exact target timestamp date instance
+      const targetDate = new Date(task.date);
+      targetDate.setHours(taskHours, taskMinutes, 0, 0);
+
+      const delayInMs = targetDate.getTime() - now.getTime();
+
+      // Pass the precise timestamp delta to your SW background daemon thread
+      if (delayInMs > 0 && navigator.serviceWorker && navigator.serviceWorker.controller) {
+        navigator.serviceWorker.controller.postMessage({
+          type: "SCHEDULE_REMINDER",
+          title: "⏰ Task Reminder!",
           body: `${task.title} — ${task.priority?.toUpperCase() || ""} priority`,
-          icon: "/favicon.ico",
-          tag: `task-${task.id}-${taskHours}:${taskMinutes}`, // Prevents duplicate fires within the same minute
-          requireInteraction: true
+          delay: delayInMs,
+          tag: `task-${task.id}`
         });
       }
-    });
-  }, 30000); // Evaluates every 30 seconds
+    };
 
-  return () => clearInterval(interval);
-}, [tasks, token]);
-
+    // Recalculate background alarm triggers automatically whenever tasks change
+    if (tasks.length > 0) {
+      tasks.forEach(task => scheduleMobileNotification(task));
+    }
+  }, [tasks, token]);
+  
   // ===== AUTH =====
   const handleLogout = () => {
     localStorage.removeItem("token");
