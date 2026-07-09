@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { fetchTodos, createTodo, updateTodo, deleteTodo } from "./api";
 import {
   getLocalTasks,
@@ -109,74 +109,75 @@ export default function App() {
   // ==========================================
   // ⏰ NATIVE OS NOTIFICATION SCHEDULER
   // ==========================================
-  useEffect(() => {
+   useEffect(() => {
     if ("Notification" in window && Notification.permission === "default") {
       Notification.requestPermission();
     }
   }, []);
 
+  const notifiedRef = useRef(new Set()); // ✅ tracks which task+time we've already fired
+
   useEffect(() => {
     if (!token) return;
+    if (Notification.permission !== "granted") return;
 
-    const scheduleMobileNotification = (task) => {
-      if (!task.time || !task.date || task.isCompleted) return;
-
+    const interval = setInterval(() => {
       const now = new Date();
-      let taskHours = 0;
-      let taskMinutes = 0;
+      const currentDate = now.toISOString().slice(0, 10);
 
-      // Handle 12-Hour conversion formats (AM/PM)
-      if (task.time.toUpperCase().includes("AM") || task.time.toUpperCase().includes("PM")) {
-        const cleanTimeStr = task.time.replace(/[^0-9:]/g, "");
-        const isPM = task.time.toUpperCase().includes("PM");
-        const [h, m] = cleanTimeStr.split(":");
-        taskHours = parseInt(h, 10);
-        taskMinutes = parseInt(m, 10);
+      const systemHours = now.getHours();
+      const systemMinutes = now.getMinutes();
 
-        if (taskHours === 12) {
-          taskHours = isPM ? 12 : 0;
-        } else if (isPM) {
-          taskHours += 12;
-        }
-      } else {
-        // Handle Standard 24-Hour fallback split parsing
-        const [h, m] = task.time.split(":");
-        taskHours = parseInt(h, 10);
-        taskMinutes = parseInt(m, 10);
-      }
+      tasks.forEach((task) => {
+        if (task.isCompleted || !task.time || !task.date || task.date !== currentDate) return;
 
-      const targetDate = new Date(task.date);
-      targetDate.setHours(taskHours, taskMinutes, 0, 0);
+        let taskHours = 0;
+        let taskMinutes = 0;
 
-      const delayInMs = targetDate.getTime() - now.getTime();
+        if (task.time.toUpperCase().includes("AM") || task.time.toUpperCase().includes("PM")) {
+          const cleanTimeStr = task.time.replace(/[^0-9:]/g, "");
+          const isPM = task.time.toUpperCase().includes("PM");
 
-      if (delayInMs > 0) {
-        if (navigator.serviceWorker && navigator.serviceWorker.controller) {
-          // Send intent directly to the OS via Service Worker (Works Offline!)
-          navigator.serviceWorker.controller.postMessage({
-            type: "SCHEDULE_REMINDER",
-            title: "⏰ Task Reminder!",
-            body: `${task.title} — ${task.priority?.toUpperCase() || ""} priority`,
-            delay: delayInMs,
-            tag: `task-${task.id}`
-          });
+          const [h, m] = cleanTimeStr.split(":");
+          taskHours = parseInt(h, 10);
+          taskMinutes = parseInt(m, 10);
+
+          if (taskHours === 12) {
+            taskHours = isPM ? 12 : 0;
+          } else if (isPM) {
+            taskHours += 12;
+          }
         } else {
-          // Safe Local Timeout Fallback for standard browsers
-          setTimeout(() => {
-            new Notification("⏰ Task Reminder!", {
-              body: `${task.title} — ${task.priority?.toUpperCase() || ""} priority`,
-              icon: "/favicon.ico",
-              tag: `task-${task.id}`,
-              requireInteraction: true
-            });
-          }, delayInMs);
+          const [h, m] = task.time.split(":");
+          taskHours = parseInt(h, 10);
+          taskMinutes = parseInt(m, 10);
         }
-      }
-    };
 
-    if (tasks.length > 0) {
-      tasks.forEach(task => scheduleMobileNotification(task));
-    }
+        if (taskHours === systemHours && taskMinutes === systemMinutes) {
+          const notifyKey = `${task.id}-${currentDate}-${taskHours}:${taskMinutes}`;
+
+          if (notifiedRef.current.has(notifyKey)) return; // ✅ already fired this one, skip
+
+          new Notification("⏰ Task Reminder!", {
+            body: `${task.title} — ${task.priority?.toUpperCase() || ""} priority`,
+            icon: "/favicon.ico",
+            tag: `task-${task.id}-${taskHours}:${taskMinutes}`,
+            requireInteraction: true
+          });
+
+          notifiedRef.current.add(notifyKey); // ✅ mark as notified
+        }
+      });
+
+      // ✅ housekeeping: drop keys not from today so the Set doesn't grow forever
+      notifiedRef.current.forEach((key) => {
+        if (!key.includes(`-${currentDate}-`)) {
+          notifiedRef.current.delete(key);
+        }
+      });
+    }, 30000);
+
+    return () => clearInterval(interval);
   }, [tasks, token]);
 
   // ===== AUTH =====
