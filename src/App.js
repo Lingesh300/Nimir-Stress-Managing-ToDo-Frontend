@@ -107,15 +107,15 @@ export default function App() {
   }, [token, userEmail, loadTasks]);
 
   // ==========================================
-  // ⏰ NATIVE OS NOTIFICATION SCHEDULER
+  // ⏰ STABLE 30-SECOND POLLING NOTIFICATION ENGINE
   // ==========================================
-   useEffect(() => {
+  useEffect(() => {
     if ("Notification" in window && Notification.permission === "default") {
       Notification.requestPermission();
     }
   }, []);
 
-  const notifiedRef = useRef(new Set()); // ✅ tracks which task+time we've already fired
+  const notifiedRef = useRef(new Set());
 
   useEffect(() => {
     if (!token) return;
@@ -156,7 +156,7 @@ export default function App() {
         if (taskHours === systemHours && taskMinutes === systemMinutes) {
           const notifyKey = `${task.id}-${currentDate}-${taskHours}:${taskMinutes}`;
 
-          if (notifiedRef.current.has(notifyKey)) return; // ✅ already fired this one, skip
+          if (notifiedRef.current.has(notifyKey)) return;
 
           new Notification("⏰ Task Reminder!", {
             body: `${task.title} — ${task.priority?.toUpperCase() || ""} priority`,
@@ -165,11 +165,11 @@ export default function App() {
             requireInteraction: true
           });
 
-          notifiedRef.current.add(notifyKey); // ✅ mark as notified
+          notifiedRef.current.add(notifyKey);
         }
       });
 
-      // ✅ housekeeping: drop keys not from today so the Set doesn't grow forever
+      // Clean old tracking keys
       notifiedRef.current.forEach((key) => {
         if (!key.includes(`-${currentDate}-`)) {
           notifiedRef.current.delete(key);
@@ -216,16 +216,29 @@ export default function App() {
     setIsModalOpen(false);
 
     if (editingTask) {
+      const originalId = editingTask.id;
       const updated = { ...editingTask, ...data, userEmail };
+      
+      // Optimistic state update
       setTasks((prev) =>
-        prev.map((t) => (t.id === editingTask.id ? updated : t))
+        prev.map((t) => (t.id === originalId ? updated : t))
       );
       await updateTaskLocally(updated);
+
       if (isOnline) {
-        await updateTodo(updated);
-        setTasks((prev) =>
-          prev.map((t) => (t.id === editingTask.id ? { ...updated, syncStatus: "synced" } : t))
-        );
+        try {
+          const res = await updateTodo(updated);
+          const savedFromServer = await res.json();
+          
+          // ✅ FIX: Overwrite state and IndexedDB with the unified server ID response
+          setTasks((prev) => {
+            const updatedState = prev.map((t) => (t.id === originalId ? { ...savedFromServer, syncStatus: "synced" } : t));
+            saveTasksLocally(updatedState, userEmail);
+            return updatedState;
+          });
+        } catch (err) {
+          console.error("Online task update push failed", err);
+        }
       } else {
         setSyncStatus("pending");
       }
@@ -268,9 +281,10 @@ export default function App() {
     );
     await updateTaskLocally(updated);
     if (isOnline) {
-      await updateTodo(updated);
+      const res = await updateTodo(updated);
+      const saved = await res.json();
       setTasks((prev) =>
-        prev.map((t) => (t.id === task.id ? { ...updated, syncStatus: "synced" } : t))
+        prev.map((t) => (t.id === task.id ? { ...saved, syncStatus: "synced" } : t))
       );
     } else {
       setSyncStatus("pending");
