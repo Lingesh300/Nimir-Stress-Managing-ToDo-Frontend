@@ -3,7 +3,7 @@
 const DB_NAME = "nimir-db";
 const DB_VERSION = 1;
 const STORE_NAME = "tasks";
-const NOTES_STORE_NAME = "notes_sync"; // ✅ Grouped store names at the top
+const NOTES_STORE_NAME = "notes_sync";
 
 // open database
 const openDB = () => {
@@ -20,7 +20,7 @@ const openDB = () => {
         store.createIndex("syncStatus", "syncStatus", { unique: false });
       }
 
-      // ✅ FIXED: Notes store generation handled inside correct lifecycle hook scope!
+      // Notes store generation
       if (!dbInstance.objectStoreNames.contains(NOTES_STORE_NAME)) {
         dbInstance.createObjectStore(NOTES_STORE_NAME, { keyPath: "userEmail" });
       }
@@ -31,7 +31,7 @@ const openDB = () => {
   });
 };
 
-// save all tasks (replace all)
+// save all tasks (replace all synced tasks safely)
 export const saveTasksLocally = async (tasks, userEmail) => {
   const db = await openDB();
   const tx = db.transaction(STORE_NAME, "readwrite");
@@ -43,13 +43,15 @@ export const saveTasksLocally = async (tasks, userEmail) => {
   return new Promise((resolve, reject) => {
     request.onsuccess = () => {
       const existing = request.result;
+      // delete synced ones (keep pending)
       existing.forEach((task) => {
         if (task.syncStatus === "synced") {
           store.delete(task.id);
         }
       });
+      // add fresh from server
       tasks.forEach((task) => {
-        store.put({ ...task, syncStatus: "synced" });
+        store.put({ ...task, syncStatus: "synced", userEmail });
       });
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
@@ -120,7 +122,7 @@ export const deleteTaskLocally = async (id) => {
     getRequest.onsuccess = () => {
       const task = getRequest.result;
       if (task) {
-        if (String(task.id).startsWith("local-")) {
+        if (String(task.id).startsWith("local-") || String(task.id).startsWith("temp-")) {
           store.delete(id);
         } else {
           store.put({ ...task, syncStatus: "pending-delete" });
@@ -193,11 +195,7 @@ export const removeLocalTask = async (id) => {
   });
 };
 
-// ==========================================
-// 📝 NOTES SYNC READ / WRITE LAYERS
-// ==========================================
-
-// 1. Write note locally with sync flags
+// 📝 NOTES LAYER
 export const saveNoteLocally = async (userEmail, notesText) => {
   const db = await openDB();
   const tx = db.transaction(NOTES_STORE_NAME, "readwrite");
@@ -217,7 +215,6 @@ export const saveNoteLocally = async (userEmail, notesText) => {
   });
 };
 
-// 2. Read note locally
 export const getLocalNote = async (userEmail) => {
   const db = await openDB();
   const tx = db.transaction(NOTES_STORE_NAME, "readonly");

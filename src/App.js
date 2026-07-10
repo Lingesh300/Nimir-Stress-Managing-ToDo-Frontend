@@ -32,16 +32,55 @@ export default function App() {
   );
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [syncStatus, setSyncStatus] = useState("synced");
-  // synced | syncing | pending
 
-  // ===== ONLINE/OFFLINE DETECTION =====
+  // ===== LOAD TASKS =====
+  const loadTasks = useCallback(async () => {
+    setLoading(true);
+
+    // 1. Load instantly from local IndexedDB cache shell
+    const localTasks = await getLocalTasks(userEmail);
+    if (localTasks.length > 0) {
+      setTasks(localTasks.filter(t => t.syncStatus !== "pending-delete"));
+    }
+
+    // 2. Refresh from server if network channel is open
+    if (navigator.onLine) {
+      try {
+        const res = await fetchTodos();
+        if (res.status === 403 || res.status === 401) {
+          handleLogout();
+          return;
+        }
+        const serverTasks = await res.json();
+        await saveTasksLocally(serverTasks, userEmail);
+        
+        // Re-read to guarantee local pending task changes aren't stepped over
+        const finalLocal = await getLocalTasks(userEmail);
+        setTasks(finalLocal.filter(t => t.syncStatus !== "pending-delete"));
+        setSyncStatus("synced");
+      } catch (err) {
+        console.error("Failed to fetch from server", err);
+        setSyncStatus("pending");
+      }
+    } else {
+      setSyncStatus("pending");
+    }
+    setLoading(false);
+  }, [userEmail]);
+
+  // ===== ONLINE/OFFLINE DETECTION & CORE ALIGNMENT =====
   useEffect(() => {
     const handleOnline = async () => {
       setIsOnline(true);
       setSyncStatus("syncing");
       try {
         const result = await syncPendingTasks(userEmail);
-        if (result.tasks) setTasks(result.tasks);
+        if (result && result.tasks) {
+          setTasks(result.tasks);
+        } else {
+          const finalLocal = await getLocalTasks(userEmail);
+          setTasks(finalLocal.filter(t => t.syncStatus !== "pending-delete"));
+        }
         setSyncStatus("synced");
       } catch {
         setSyncStatus("pending");
@@ -67,45 +106,11 @@ export default function App() {
     localStorage.setItem("darkMode", darkMode);
   }, [darkMode]);
 
-  // ===== LOAD TASKS =====
-  const loadTasks = useCallback(async () => {
-    setLoading(true);
-
-    // always load from local first (instant!)
-    const localTasks = await getLocalTasks(userEmail);
-    if (localTasks.length > 0) {
-      setTasks(localTasks.filter(t => t.syncStatus !== "pending-delete"));
-      setLoading(false);
-    }
-
-    // then sync from server if online
-    if (navigator.onLine) {
-      try {
-        const res = await fetchTodos();
-        if (res.status === 403 || res.status === 401) {
-          handleLogout();
-          return;
-        }
-        const serverTasks = await res.json();
-        await saveTasksLocally(serverTasks, userEmail);
-        setTasks(serverTasks);
-        setSyncStatus("synced");
-      } catch (err) {
-        console.error("Failed to fetch from server", err);
-        setSyncStatus("pending");
-      }
-    } else {
-      setSyncStatus("pending");
-    }
-
-    setLoading(false);
-  }, [userEmail]);
-
   useEffect(() => {
     if (token && userEmail) loadTasks();
   }, [token, userEmail, loadTasks]);
 
-  // ===== NOTIFICATIONS =====
+  // ===== 30-SEC TIME PARSING REMINDERS ENGINE =====
   useEffect(() => {
     if ("Notification" in window && Notification.permission === "default") {
       Notification.requestPermission();
@@ -119,14 +124,38 @@ export default function App() {
     const interval = setInterval(() => {
       const now = new Date();
       const currentDate = now.toISOString().slice(0, 10);
-      const currentTime = now.toTimeString().slice(0, 5);
+      const systemHours = now.getHours();
+      const systemMinutes = now.getMinutes();
 
       tasks.forEach((task) => {
         if (task.isCompleted || !task.time || !task.date || task.date !== currentDate) return;
-        if (task.time === currentTime) {
+
+        let taskHours = 0;
+        let taskMinutes = 0;
+
+        if (task.time.toUpperCase().includes("AM") || task.time.toUpperCase().includes("PM")) {
+          const cleanTimeStr = task.time.replace(/[^0-9:]/g, "");
+          const isPM = task.time.toUpperCase().includes("PM");
+          const [h, m] = cleanTimeStr.split(":");
+          taskHours = parseInt(h, 10);
+          taskMinutes = parseInt(m, 10);
+          if (taskHours === 12) {
+            taskHours = isPM ? 12 : 0;
+          } else if (isPM) {
+            taskHours += 12;
+          }
+        } else {
+          const [h, m] = task.time.split(":");
+          taskHours = parseInt(h, 10);
+          taskMinutes = parseInt(m, 10);
+        }
+
+        if (taskHours === systemHours && taskMinutes === systemMinutes) {
           new Notification("⏰ Task Reminder!", {
             body: `${task.title} — ${task.priority?.toUpperCase() || ""} priority`,
             icon: "/favicon.ico",
+            tag: `task-${task.id}-${taskHours}:${taskMinutes}`,
+            requireInteraction: true
           });
         }
       });
@@ -135,7 +164,7 @@ export default function App() {
     return () => clearInterval(interval);
   }, [tasks, token]);
 
-  // ===== AUTH =====
+  // ===== AUTH INTERACTION =====
   const handleLogout = () => {
     localStorage.removeItem("token");
     localStorage.removeItem("userEmail");
@@ -151,23 +180,11 @@ export default function App() {
     setUserEmail(email);
   };
 
-  // ===== MODAL =====
-  const openAddModal = () => {
-    setEditingTask(null);
-    setIsModalOpen(true);
-  };
+  const openAddModal = () => { setEditingTask(null); setIsModalOpen(true); };
+  const openEditModal = (task) => { setEditingTask(task); setIsModalOpen(true); };
+  const handleCloseModal = () => setIsModalOpen(false);
 
-  const openEditModal = (task) => {
-    setEditingTask(task);
-    setIsModalOpen(true);
-  };
-
-  const handleCloseModal = () => {
-    setIsModalOpen(false);
-  };
-
-  // ===== TASK OPERATIONS =====
-  // ===== FIXED TASK OPERATIONS (NO DUPLICATIONS) =====
+  // ===== FIXED CRITICAL COMPONENT OPERATIONS LAYER =====
   const saveTask = async (data) => {
     setIsModalOpen(false);
 
@@ -175,18 +192,19 @@ export default function App() {
       const originalId = editingTask.id;
       const updated = { ...editingTask, ...data, userEmail };
 
-      // Update UI and IndexedDB instantly
       setTasks((prev) => prev.map((t) => (t.id === originalId ? updated : t)));
       await updateTaskLocally(updated);
 
       if (isOnline) {
         try {
-          await updateTodo(updated);
-          setTasks((prev) => {
-            const updatedState = prev.map((t) => (t.id === originalId ? { ...updated, syncStatus: "synced" } : t));
-            saveTasksLocally(updatedState, userEmail);
-            return updatedState;
-          });
+          const res = await updateTodo(updated);
+          if (res && res.ok) {
+            setTasks((prev) => {
+              const updatedState = prev.map((t) => (t.id === originalId ? { ...updated, syncStatus: "synced" } : t));
+              saveTasksLocally(updatedState, userEmail);
+              return updatedState;
+            });
+          }
         } catch (err) {
           console.error("Online update sync failed", err);
         }
@@ -203,7 +221,6 @@ export default function App() {
         ...data,
       };
 
-      // Optimistic Add to UI and IndexedDB
       setTasks((prev) => [...prev, newTask]);
       await addTaskLocally(newTask, userEmail);
 
@@ -212,8 +229,6 @@ export default function App() {
           const res = await createTodo({ ...data, isCompleted: false, userEmail });
           if (res && res.ok) {
             const saved = await res.json();
-            
-            // ✅ FIX: Uses functional prev state array to perfectly sync the real server ID
             setTasks((prev) => {
               const updatedState = prev.map((t) => (t.id === tempId ? { ...saved, syncStatus: "synced" } : t));
               saveTasksLocally(updatedState, userEmail);
@@ -238,12 +253,14 @@ export default function App() {
 
     if (isOnline) {
       try {
-        await updateTodo(updated);
-        setTasks((prev) => {
-          const updatedState = prev.map((t) => (t.id === originalId ? { ...updated, syncStatus: "synced" } : t));
-          saveTasksLocally(updatedState, userEmail);
-          return updatedState;
-        });
+        const res = await updateTodo(updated);
+        if (res && res.ok) {
+          setTasks((prev) => {
+            const updatedState = prev.map((t) => (t.id === originalId ? { ...updated, syncStatus: "synced" } : t));
+            saveTasksLocally(updatedState, userEmail);
+            return updatedState;
+          });
+        }
       } catch (err) {
         console.error("Completion toggle sync failed", err);
       }
@@ -252,23 +269,23 @@ export default function App() {
     }
   };
 
-  
   const deleteTask = async (id) => {
-    // optimistic delete
     setTasks((prev) => prev.filter((t) => t.id !== id));
     await deleteTaskLocally(id);
     if (isOnline) {
-      await deleteTodo(id);
+      try {
+        await deleteTodo(id);
+      } catch (err) {
+        console.error("Online delete failed", err);
+      }
     } else {
       setSyncStatus("pending");
     }
   };
 
-  // ===== SORTING =====
+  // ===== SORTING ENGINE =====
   const priorityOrder = { high: 1, medium: 2, low: 3 };
-
-  const isOverdue = (task) =>
-    !task.isCompleted && task.date && task.date < today;
+  const isOverdue = (task) => !task.isCompleted && task.date && task.date < today;
 
   const filteredTasks = tasks
     .filter((t) => {
@@ -289,9 +306,7 @@ export default function App() {
       return (a.id || 0) - (b.id || 0);
     });
 
-  if (!token) {
-    return <Login onLoginSuccess={handleLoginSuccess} />;
-  }
+  if (!token) return <Login onLoginSuccess={handleLoginSuccess} />;
 
   return (
     <div className={`app ${darkMode ? "dark" : ""}`}>
@@ -314,8 +329,6 @@ export default function App() {
             {view === "Upcoming" && "Upcoming Tasks"}
             {view === "Completed" && "Completed Tasks"}
           </h1>
-
-          {/* ✅ sync status indicator */}
           <div className={`sync-badge ${syncStatus}`}>
             {syncStatus === "synced" && "✅ Synced"}
             {syncStatus === "syncing" && "🔄 Syncing..."}
