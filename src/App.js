@@ -1,11 +1,11 @@
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { fetchTodos, createTodo, updateTodo, deleteTodo } from "./api";
 import {
-  getLocalTasks,
-  saveTasksLocally,
-  addTaskLocally,
-  updateTaskLocally,
-  deleteTaskLocally,
+  getLocalTasks,
+  saveTasksLocally,
+  addTaskLocally,
+  updateTaskLocally,
+  deleteTaskLocally,
 } from "./db";
 import { syncPendingTasks } from "./sync";
 import Sidebar from "./Sidebar";
@@ -16,210 +16,202 @@ import Login from "./Login";
 import "./index.css";
 
 export default function App() {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = new Date().toISOString().slice(0, 10);
 
-  const [token, setToken] = useState(localStorage.getItem("token"));
-  const [userEmail, setUserEmail] = useState(
-    localStorage.getItem("userEmail") || ""
-  );
-  const [view, setView] = useState("Today");
-  const [tasks, setTasks] = useState([]);
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingTask, setEditingTask] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [darkMode, setDarkMode] = useState(
-    localStorage.getItem("darkMode") === "true"
-  );
-  const [isOnline, setIsOnline] = useState(navigator.onLine);
-  const [syncStatus, setSyncStatus] = useState("synced");
+  const [token, setToken] = useState(localStorage.getItem("token"));
+  const [userEmail, setUserEmail] = useState(
+    localStorage.getItem("userEmail") || ""
+  );
+  const [view, setView] = useState("Today");
+  const [tasks, setTasks] = useState([]);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingTask, setEditingTask] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [darkMode, setDarkMode] = useState(
+    localStorage.getItem("darkMode") === "true"
+  );
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [syncStatus, setSyncStatus] = useState("synced");
 
-  // ===== ONLINE/OFFLINE DETECTION & AUTOMATIC UI STATE SYNC =====
-  useEffect(() => {
-    const handleOnline = async () => {
-      setIsOnline(true);
-      setSyncStatus("syncing");
-      try {
-        const result = await syncPendingTasks(userEmail);
-        if (result && result.tasks) {
-          setTasks(result.tasks);
-        } else {
-          const currentLocal = await getLocalTasks(userEmail);
-          setTasks(currentLocal.filter(t => t.syncStatus !== "pending-delete"));
-        }
-        setSyncStatus("synced");
-      } catch (err) {
-        console.error("Online synchronization processing failed", err);
-        setSyncStatus("pending");
-      }
-    };
+  // ===== ONLINE/OFFLINE DETECTION & AUTOMATIC UI STATE SYNC =====
+  useEffect(() => {
+    const handleOnline = async () => {
+      setIsOnline(true);
+      setSyncStatus("syncing");
+      try {
+        const result = await syncPendingTasks(userEmail);
+        if (result && result.tasks) {
+          setTasks(result.tasks);
+        } else {
+          // Fallback refresh to read the latest from IndexedDB if sync endpoints just complete
+          const currentLocal = await getLocalTasks(userEmail);
+          setTasks(currentLocal.filter(t => t.syncStatus !== "pending-delete"));
+        }
+        setSyncStatus("synced");
+      } catch (err) {
+        console.error("Online synchronization processing failed", err);
+        setSyncStatus("pending");
+      }
+    };
 
-    const handleOffline = () => {
-      setIsOnline(false);
-      setSyncStatus("pending");
-    };
+    const handleOffline = () => {
+      setIsOnline(false);
+      setSyncStatus("pending");
+    };
 
-    window.addEventListener("online", handleOnline);
-    window.addEventListener("offline", handleOffline);
-    return () => {
-      window.removeEventListener("online", handleOnline);
-      window.removeEventListener("offline", handleOffline);
-    };
-  }, [userEmail]);
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, [userEmail]);
 
-  // ===== DARK MODE =====
-  useEffect(() => {
-    document.body.classList.toggle("dark", darkMode);
-    localStorage.setItem("darkMode", darkMode);
-  }, [darkMode]);
+  // ===== DARK MODE =====
+  useEffect(() => {
+    document.body.classList.toggle("dark", darkMode);
+    localStorage.setItem("darkMode", darkMode);
+  }, [darkMode]);
 
-  // ===== LOAD TASKS =====
-  const loadTasks = useCallback(async () => {
-    setLoading(true);
-    const localTasks = await getLocalTasks(userEmail);
-    if (localTasks.length > 0) {
-      setTasks(localTasks.filter(t => t.syncStatus !== "pending-delete"));
-      setLoading(false);
-    }
+  // ===== LOAD TASKS =====
+  const loadTasks = useCallback(async () => {
+    setLoading(true);
+    const localTasks = await getLocalTasks(userEmail);
+    if (localTasks.length > 0) {
+      setTasks(localTasks.filter(t => t.syncStatus !== "pending-delete"));
+      setLoading(false);
+    }
 
-    if (navigator.onLine) {
-      try {
-        const res = await fetchTodos();
-        if (res.status === 403 || res.status === 401) {
-          handleLogout();
-          return;
-        }
-        const serverTasks = await res.json();
-        await saveTasksLocally(serverTasks, userEmail);
-        setTasks(serverTasks);
-        setSyncStatus("synced");
-      } catch (err) {
-        console.error("Failed to fetch from server", err);
-        setSyncStatus("pending");
-      }
-    } else {
-      setSyncStatus("pending");
-    }
-    setLoading(false);
-  }, [userEmail]);
+    if (navigator.onLine) {
+      try {
+        const res = await fetchTodos();
+        if (res.status === 403 || res.status === 401) {
+          handleLogout();
+          return;
+        }
+        const serverTasks = await res.json();
+        await saveTasksLocally(serverTasks, userEmail);
+        setTasks(serverTasks);
+        setSyncStatus("synced");
+      } catch (err) {
+        console.error("Failed to fetch from server", err);
+        setSyncStatus("pending");
+      }
+    } else {
+      setSyncStatus("pending");
+    }
+    setLoading(false);
+  }, [userEmail]);
 
-  useEffect(() => {
-    if (token && userEmail) loadTasks();
-  }, [token, userEmail, loadTasks]);
+  useEffect(() => {
+    if (token && userEmail) loadTasks();
+  }, [token, userEmail, loadTasks]);
 
-  // ==========================================
-  // ⏰ STABLE 30-SECOND POLLING NOTIFICATION ENGINE
-  // ==========================================
-  useEffect(() => {
-    if ("Notification" in window && Notification.permission === "default") {
-      Notification.requestPermission();
-    }
-  }, []);
+  // ===== NOTIFICATIONS =====
+  useEffect(() => {
+    if ("Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission();
+    }
+  }, []);
 
-  const notifiedRef = useRef(new Set());
+  useEffect(() => {
+  if (!token) return;
+  if (Notification.permission !== "granted") return;
 
-  useEffect(() => {
-    if (!token) return;
-    if (Notification.permission !== "granted") return;
+  const interval = setInterval(() => {
+    const now = new Date();
+    const currentDate = now.toISOString().slice(0, 10);
+    
+    // Exact structural integers from system clock source
+    const systemHours = now.getHours();
+    const systemMinutes = now.getMinutes();
 
-    const interval = setInterval(() => {
-      const now = new Date();
-      const currentDate = now.toISOString().slice(0, 10);
+    tasks.forEach((task) => {
+      if (task.isCompleted || !task.time || !task.date || task.date !== currentDate) return;
+      
+      let taskHours = 0;
+      let taskMinutes = 0;
 
-      const systemHours = now.getHours();
-      const systemMinutes = now.getMinutes();
+      // 1. Check if the task time string contains 12-hour markers (AM/PM)
+      if (task.time.toUpperCase().includes("AM") || task.time.toUpperCase().includes("PM")) {
+        // Formats like: "09:30 PM", "9:30 PM", "3:15 AM"
+        const cleanTimeStr = task.time.replace(/[^0-9:]/g, ""); // extracts "09:30"
+        const isPM = task.time.toUpperCase().includes("PM");
+        
+        const [h, m] = cleanTimeStr.split(":");
+        taskHours = parseInt(h, 10);
+        taskMinutes = parseInt(m, 10);
 
-      tasks.forEach((task) => {
-        if (task.isCompleted || !task.time || !task.date || task.date !== currentDate) return;
+        if (taskHours === 12) {
+          taskHours = isPM ? 12 : 0;
+        } else if (isPM) {
+          taskHours += 12;
+        }
+      } else {
+        // 2. Standard 24-hour format matching layout: "21:30", "09:30"
+        const [h, m] = task.time.split(":");
+        taskHours = parseInt(h, 10);
+        taskMinutes = parseInt(m, 10);
+      }
 
-        let taskHours = 0;
-        let taskMinutes = 0;
+      // Final mathematical evaluation check completely bypassed string format mismatches!
+      if (taskHours === systemHours && taskMinutes === systemMinutes) {
+        new Notification("⏰ Task Reminder!", {
+          body: `${task.title} — ${task.priority?.toUpperCase() || ""} priority`,
+          icon: "/favicon.ico",
+          tag: `task-${task.id}-${taskHours}:${taskMinutes}`, // Prevents duplicate fires within the same minute
+          requireInteraction: true
+        });
+      }
+    });
+  }, 30000); // Evaluates every 30 seconds
 
-        if (task.time.toUpperCase().includes("AM") || task.time.toUpperCase().includes("PM")) {
-          const cleanTimeStr = task.time.replace(/[^0-9:]/g, "");
-          const isPM = task.time.toUpperCase().includes("PM");
+  return () => clearInterval(interval);
+}, [tasks, token]);
 
-          const [h, m] = cleanTimeStr.split(":");
-          taskHours = parseInt(h, 10);
-          taskMinutes = parseInt(m, 10);
+  // ===== AUTH =====
+  const handleLogout = () => {
+    localStorage.removeItem("token");
+    localStorage.removeItem("userEmail");
+    setToken(null);
+    setUserEmail("");
+    setTasks([]);
+  };
 
-          if (taskHours === 12) {
-            taskHours = isPM ? 12 : 0;
-          } else if (isPM) {
-            taskHours += 12;
-          }
-        } else {
-          const [h, m] = task.time.split(":");
-          taskHours = parseInt(h, 10);
-          taskMinutes = parseInt(m, 10);
-        }
+  const handleLoginSuccess = (newToken, email) => {
+    localStorage.setItem("token", newToken);
+    localStorage.setItem("userEmail", email);
+    setToken(newToken);
+    setUserEmail(email);
+  };
 
-        if (taskHours === systemHours && taskMinutes === systemMinutes) {
-          const notifyKey = `${task.id}-${currentDate}-${taskHours}:${taskMinutes}`;
+  // ===== MODAL =====
+  const openAddModal = () => {
+    setEditingTask(null);
+    setIsModalOpen(true);
+  };
 
-          if (notifiedRef.current.has(notifyKey)) return;
+  const openEditModal = (task) => {
+    setEditingTask(task);
+    setIsModalOpen(true);
+  };
 
-          new Notification("⏰ Task Reminder!", {
-            body: `${task.title} — ${task.priority?.toUpperCase() || ""} priority`,
-            icon: "/favicon.ico",
-            tag: `task-${task.id}-${taskHours}:${taskMinutes}`,
-            requireInteraction: true
-          });
+  const handleCloseModal = () => {
+    setIsModalOpen(false);
+  };
 
-          notifiedRef.current.add(notifyKey);
-        }
-      });
+  // ===== TASK OPERATIONS =====
+  // ===== UPDATE THESE METHODS INSIDE YOUR APP.JS =====
 
-      // Clean old tracking keys
-      notifiedRef.current.forEach((key) => {
-        if (!key.includes(`-${currentDate}-`)) {
-          notifiedRef.current.delete(key);
-        }
-      });
-    }, 30000);
-
-    return () => clearInterval(interval);
-  }, [tasks, token]);
-
-  // ===== AUTH =====
-  const handleLogout = () => {
-    localStorage.removeItem("token");
-    localStorage.removeItem("userEmail");
-    setToken(null);
-    setUserEmail("");
-    setTasks([]);
-  };
-
-  const handleLoginSuccess = (newToken, email) => {
-    localStorage.setItem("token", newToken);
-    localStorage.setItem("userEmail", email);
-    setToken(newToken);
-    setUserEmail(email);
-  };
-
-  // ===== MODAL =====
-  const openAddModal = () => {
-    setEditingTask(null);
-    setIsModalOpen(true);
-  };
-
-  const openEditModal = (task) => {
-    setEditingTask(task);
-    setIsModalOpen(true);
-  };
-
-  const handleCloseModal = () => {
-    setIsModalOpen(false);
-  };
-
-  // ===== TASK OPERATIONS =====
+// ===== FIXED TASK OPERATIONS (NO DUPLICATION BUGS) =====
   const saveTask = async (data) => {
     setIsModalOpen(false);
 
     if (editingTask) {
       const originalId = editingTask.id;
       const updated = { ...editingTask, ...data, userEmail };
-      
-      // Optimistic state update
+
+      // 1. Instantly update UI and IndexedDB using the stable key
       setTasks((prev) =>
         prev.map((t) => (t.id === originalId ? updated : t))
       );
@@ -227,17 +219,23 @@ export default function App() {
 
       if (isOnline) {
         try {
+          // 2. Fire update to Spring Boot backend
           const res = await updateTodo(updated);
-          const savedFromServer = await res.json();
           
-          // ✅ FIX: Overwrite state and IndexedDB with the unified server ID response
-          setTasks((prev) => {
-            const updatedState = prev.map((t) => (t.id === originalId ? { ...savedFromServer, syncStatus: "synced" } : t));
-            saveTasksLocally(updatedState, userEmail);
-            return updatedState;
-          });
+          if (res && res.ok) {
+            const savedFromServer = await res.json();
+            
+            // 3. Reconcile local state with exact backend fields, matching on originalId
+            setTasks((prev) => {
+              const updatedState = prev.map((t) => 
+                t.id === originalId ? { ...savedFromServer, syncStatus: "synced" } : t
+              );
+              saveTasksLocally(updatedState, userEmail);
+              return updatedState;
+            });
+          }
         } catch (err) {
-          console.error("Online task update push failed", err);
+          console.error("Online update push failed", err);
         }
       } else {
         setSyncStatus("pending");
@@ -252,19 +250,23 @@ export default function App() {
         ...data,
       };
 
+      // Optimistic Add to UI and IndexedDB
       setTasks((prev) => [...prev, newTask]);
       await addTaskLocally(newTask, userEmail);
 
       if (isOnline) {
         try {
           const res = await createTodo({ ...data, isCompleted: false, userEmail });
-          const saved = await res.json();
-          
-          setTasks((prev) => {
-            const updatedState = prev.map((t) => (t.id === tempId ? { ...saved, syncStatus: "synced" } : t));
-            saveTasksLocally(updatedState, userEmail);
-            return updatedState;
-          });
+          if (res && res.ok) {
+            const saved = await res.json();
+            
+            // Swap out temp ID with clean backend database primary key
+            setTasks((prev) => {
+              const updatedState = prev.map((t) => (t.id === tempId ? { ...saved, syncStatus: "synced" } : t));
+              saveTasksLocally(updatedState, userEmail);
+              return updatedState;
+            });
+          }
         } catch (err) {
           setSyncStatus("pending");
         }
@@ -275,123 +277,132 @@ export default function App() {
   };
 
   const toggleComplete = async (task) => {
+    const originalId = task.id;
     const updated = { ...task, isCompleted: !task.isCompleted, userEmail };
+    
     setTasks((prev) =>
-      prev.map((t) => (t.id === task.id ? updated : t))
+      prev.map((t) => (t.id === originalId ? updated : t))
     );
     await updateTaskLocally(updated);
+
     if (isOnline) {
-      const res = await updateTodo(updated);
-      const saved = await res.json();
-      setTasks((prev) =>
-        prev.map((t) => (t.id === task.id ? { ...saved, syncStatus: "synced" } : t))
-      );
+      try {
+        const res = await updateTodo(updated);
+        if (res && res.ok) {
+          const saved = await res.json();
+          setTasks((prev) =>
+            prev.map((t) => (t.id === originalId ? { ...saved, syncStatus: "synced" } : t))
+          );
+        }
+      } catch (err) {
+        console.error("Online completion toggle failed", err);
+      }
     } else {
       setSyncStatus("pending");
     }
   };
 
-  const deleteTask = async (id) => {
-    setTasks((prev) => prev.filter((t) => t.id !== id));
-    await deleteTaskLocally(id);
-    if (isOnline) {
-      await deleteTodo(id);
-    } else {
-      setSyncStatus("pending");
-    }
-  };
+  const deleteTask = async (id) => {
+    setTasks((prev) => prev.filter((t) => t.id !== id));
+    await deleteTaskLocally(id);
+    if (isOnline) {
+      await deleteTodo(id);
+    } else {
+      setSyncStatus("pending");
+    }
+  };
 
-  // ===== SORTING =====
-  const priorityOrder = { high: 1, medium: 2, low: 3 };
-  const isOverdue = (task) => !task.isCompleted && task.date && task.date < today;
+  // ===== SORTING =====
+  const priorityOrder = { high: 1, medium: 2, low: 3 };
+  const isOverdue = (task) => !task.isCompleted && task.date && task.date < today;
 
-  const filteredTasks = tasks
-    .filter((t) => {
-      if (t.syncStatus === "pending-delete") return false;
-      if (view === "Completed") return t.isCompleted;
-      if (view === "Upcoming") return !t.isCompleted && t.date > today;
-      return !t.isCompleted && (!t.date || t.date <= today);
-    })
-    .sort((a, b) => {
-      const aPriority = priorityOrder[a.priority] || 2;
-      const bPriority = priorityOrder[b.priority] || 2;
-      const aOverdue = isOverdue(a);
-      const bOverdue = isOverdue(b);
-      const aScore = aOverdue ? aPriority * 10 : aPriority * 10 + 5;
-      const bScore = bOverdue ? bPriority * 10 : bPriority * 10 + 5;
-      if (aScore !== bScore) return aScore - bScore;
-      if (a.date !== b.date) return new Date(a.date) - new Date(b.date);
-      return (a.id || 0) - (b.id || 0);
-    });
+  const filteredTasks = tasks
+    .filter((t) => {
+      if (t.syncStatus === "pending-delete") return false;
+      if (view === "Completed") return t.isCompleted;
+      if (view === "Upcoming") return !t.isCompleted && t.date > today;
+      return !t.isCompleted && (!t.date || t.date <= today);
+    })
+    .sort((a, b) => {
+      const aPriority = priorityOrder[a.priority] || 2;
+      const bPriority = priorityOrder[b.priority] || 2;
+      const aOverdue = isOverdue(a);
+      const bOverdue = isOverdue(b);
+      const aScore = aOverdue ? aPriority * 10 : aPriority * 10 + 5;
+      const bScore = bOverdue ? bPriority * 10 : bPriority * 10 + 5;
+      if (aScore !== bScore) return aScore - bScore;
+      if (a.date !== b.date) return new Date(a.date) - new Date(b.date);
+      return (a.id || 0) - (b.id || 0);
+    });
 
-  if (!token) {
-    return <Login onLoginSuccess={handleLoginSuccess} />;
-  }
+  if (!token) {
+    return <Login onLoginSuccess={handleLoginSuccess} />;
+  }
 
-  return (
-    <div className={`app ${darkMode ? "dark" : ""}`}>
-      <Sidebar
-        view={view}
-        setView={setView}
-        onAdd={openAddModal}
-        onLogout={handleLogout}
-        tasks={tasks}
-        today={today}
-        darkMode={darkMode}
-        setDarkMode={setDarkMode}
-        userEmail={userEmail}
-      />
+  return (
+    <div className={`app ${darkMode ? "dark" : ""}`}>
+      <Sidebar
+        view={view}
+        setView={setView}
+        onAdd={openAddModal}
+        onLogout={handleLogout}
+        tasks={tasks}
+        today={today}
+        darkMode={darkMode}
+        setDarkMode={setDarkMode}
+        userEmail={userEmail}
+      />
 
-      <main className="main">
-        <div className="main-header">
-          <h1>
-            {view === "Today" && "Today's Tasks"}
-            {view === "Upcoming" && "Upcoming Tasks"}
-            {view === "Completed" && "Completed Tasks"}
-          </h1>
+      <main className="main">
+        <div className="main-header">
+          <h1>
+            {view === "Today" && "Today's Tasks"}
+            {view === "Upcoming" && "Upcoming Tasks"}
+            {view === "Completed" && "Completed Tasks"}
+          </h1>
 
-          <div className={`sync-badge ${syncStatus}`}>
-            {syncStatus === "synced" && "✅ Synced"}
-            {syncStatus === "syncing" && "🔄 Syncing..."}
-            {syncStatus === "pending" && "📡 Offline"}
-          </div>
-        </div>
+          <div className={`sync-badge ${syncStatus}`}>
+            {syncStatus === "synced" && "✅ Synced"}
+            {syncStatus === "syncing" && "🔄 Syncing..."}
+            {syncStatus === "pending" && "📡 Offline"}
+          </div>
+        </div>
 
-        {view === "Today" && filteredTasks.some(isOverdue) && (
-          <div className="overdue-warning">
-            ⚠️ You have overdue tasks — finish them first!
-          </div>
-        )}
+        {view === "Today" && filteredTasks.some(isOverdue) && (
+          <div className="overdue-warning">
+            ⚠️ You have overdue tasks — finish them first!
+          </div>
+        )}
 
-        {!isOnline && (
-          <div className="offline-banner">
-            📡 You're offline — changes will sync when back online
-          </div>
-        )}
+        {!isOnline && (
+          <div className="offline-banner">
+            📡 You're offline — changes will sync when back online
+          </div>
+        )}
 
-        {loading && tasks.length === 0 ? (
-          <p className="loading">Loading...</p>
-        ) : (
-          <TaskList
-            tasks={filteredTasks}
-            onToggle={toggleComplete}
-            onDelete={deleteTask}
-            onEdit={openEditModal}
-            today={today}
-          />
-        )}
-      </main>
+        {loading && tasks.length === 0 ? (
+          <p className="loading">Loading...</p>
+        ) : (
+          <TaskList
+            tasks={filteredTasks}
+            onToggle={toggleComplete}
+            onDelete={deleteTask}
+            onEdit={openEditModal}
+            today={today}
+          />
+        )}
+      </main>
 
-      <FloatingAddButton onClick={openAddModal} />
+      <FloatingAddButton onClick={openAddModal} />
 
-      <AddTaskModal
-        isOpen={isModalOpen}
-        onClose={handleCloseModal}
-        onSave={saveTask}
-        existingTask={editingTask}
-        tasks={tasks}
-        today={today}
-      />
-    </div>
-  );
+      <AddTaskModal
+        isOpen={isModalOpen}
+        onClose={handleCloseModal}
+        onSave={saveTask}
+        existingTask={editingTask}
+        tasks={tasks}
+        today={today}
+      />
+    </div>
+  );
 }
