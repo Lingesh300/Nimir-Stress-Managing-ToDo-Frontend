@@ -1,5 +1,4 @@
 import { useEffect, useState, useCallback } from "react";
-import { fetchTodos, createTodo, updateTodo, deleteTodo } from "./api";
 import {
   getLocalTasks,
   saveTasksLocally,
@@ -33,33 +32,21 @@ export default function App() {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [syncStatus, setSyncStatus] = useState("synced");
 
-  // ===== LOAD TASKS =====
-  const loadTasks = useCallback(async () => {
+  // ===== INITIAL LAYOUT MOUNT & HYDRATION ENGINE =====
+  const hydrateApp = useCallback(async () => {
     setLoading(true);
-
-    // 1. Load instantly from local IndexedDB cache shell
+    // 1. Immediately render local cached copy (Instant interface load)
     const localTasks = await getLocalTasks(userEmail);
-    if (localTasks.length > 0) {
-      setTasks(localTasks.filter(t => t.syncStatus !== "pending-delete"));
-    }
+    setTasks(localTasks.filter(t => t.syncStatus !== "pending-delete"));
 
-    // 2. Refresh from server if network channel is open
+    // 2. Trigger sync daemon to reconcile background lists safely
     if (navigator.onLine) {
-      try {
-        const res = await fetchTodos();
-        if (res.status === 403 || res.status === 401) {
-          handleLogout();
-          return;
-        }
-        const serverTasks = await res.json();
-        await saveTasksLocally(serverTasks, userEmail);
-        
-        // Re-read to guarantee local pending task changes aren't stepped over
-        const finalLocal = await getLocalTasks(userEmail);
-        setTasks(finalLocal.filter(t => t.syncStatus !== "pending-delete"));
+      setSyncStatus("syncing");
+      const result = await syncPendingTasks(userEmail);
+      if (result.success && result.tasks) {
+        setTasks(result.tasks);
         setSyncStatus("synced");
-      } catch (err) {
-        console.error("Failed to fetch from server", err);
+      } else {
         setSyncStatus("pending");
       }
     } else {
@@ -68,21 +55,22 @@ export default function App() {
     setLoading(false);
   }, [userEmail]);
 
-  // ===== ONLINE/OFFLINE DETECTION & CORE ALIGNMENT =====
+  useEffect(() => {
+    if (token && userEmail) hydrateApp();
+  }, [token, userEmail, hydrateApp]);
+
+  // ===== NETWORK STATUS INTERACTION MUTATORS =====
   useEffect(() => {
     const handleOnline = async () => {
       setIsOnline(true);
       setSyncStatus("syncing");
-      try {
-        const result = await syncPendingTasks(userEmail);
-        if (result && result.tasks) {
-          setTasks(result.tasks);
-        } else {
-          const finalLocal = await getLocalTasks(userEmail);
-          setTasks(finalLocal.filter(t => t.syncStatus !== "pending-delete"));
-        }
+      const result = await syncPendingTasks(userEmail);
+      if (result.success && result.tasks) {
+        setTasks(result.tasks);
         setSyncStatus("synced");
-      } catch {
+      } else {
+        const currentLocal = await getLocalTasks(userEmail);
+        setTasks(currentLocal.filter(t => t.syncStatus !== "pending-delete"));
         setSyncStatus("pending");
       }
     };
@@ -106,11 +94,7 @@ export default function App() {
     localStorage.setItem("darkMode", darkMode);
   }, [darkMode]);
 
-  useEffect(() => {
-    if (token && userEmail) loadTasks();
-  }, [token, userEmail, loadTasks]);
-
-  // ===== 30-SEC TIME PARSING REMINDERS ENGINE =====
+  // ===== 30-SEC LAPTOP NOTIFICATION ENGINE =====
   useEffect(() => {
     if ("Notification" in window && Notification.permission === "default") {
       Notification.requestPermission();
@@ -164,7 +148,7 @@ export default function App() {
     return () => clearInterval(interval);
   }, [tasks, token]);
 
-  // ===== AUTH INTERACTION =====
+  // ===== AUTHENTICATION =====
   const handleLogout = () => {
     localStorage.removeItem("token");
     localStorage.removeItem("userEmail");
@@ -184,7 +168,7 @@ export default function App() {
   const openEditModal = (task) => { setEditingTask(task); setIsModalOpen(true); };
   const handleCloseModal = () => setIsModalOpen(false);
 
-  // ===== FIXED CRITICAL COMPONENT OPERATIONS LAYER =====
+  // ===== RUNTIME ELEMENT WORKFLOW OPERATIONS =====
   const saveTask = async (data) => {
     setIsModalOpen(false);
 
@@ -196,18 +180,10 @@ export default function App() {
       await updateTaskLocally(updated);
 
       if (isOnline) {
-        try {
-          const res = await updateTodo(updated);
-          if (res && res.ok) {
-            setTasks((prev) => {
-              const updatedState = prev.map((t) => (t.id === originalId ? { ...updated, syncStatus: "synced" } : t));
-              saveTasksLocally(updatedState, userEmail);
-              return updatedState;
-            });
-          }
-        } catch (err) {
-          console.error("Online update sync failed", err);
-        }
+        // Safe dispatch: let the background daemon trigger reconciliation cleanly
+        syncPendingTasks(userEmail).then((res) => {
+          if (res.success && res.tasks) setTasks(res.tasks);
+        });
       } else {
         setSyncStatus("pending");
       }
@@ -225,19 +201,9 @@ export default function App() {
       await addTaskLocally(newTask, userEmail);
 
       if (isOnline) {
-        try {
-          const res = await createTodo({ ...data, isCompleted: false, userEmail });
-          if (res && res.ok) {
-            const saved = await res.json();
-            setTasks((prev) => {
-              const updatedState = prev.map((t) => (t.id === tempId ? { ...saved, syncStatus: "synced" } : t));
-              saveTasksLocally(updatedState, userEmail);
-              return updatedState;
-            });
-          }
-        } catch (err) {
-          setSyncStatus("pending");
-        }
+        syncPendingTasks(userEmail).then((res) => {
+          if (res.success && res.tasks) setTasks(res.tasks);
+        });
       } else {
         setSyncStatus("pending");
       }
@@ -252,18 +218,9 @@ export default function App() {
     await updateTaskLocally(updated);
 
     if (isOnline) {
-      try {
-        const res = await updateTodo(updated);
-        if (res && res.ok) {
-          setTasks((prev) => {
-            const updatedState = prev.map((t) => (t.id === originalId ? { ...updated, syncStatus: "synced" } : t));
-            saveTasksLocally(updatedState, userEmail);
-            return updatedState;
-          });
-        }
-      } catch (err) {
-        console.error("Completion toggle sync failed", err);
-      }
+      syncPendingTasks(userEmail).then((res) => {
+        if (res.success && res.tasks) setTasks(res.tasks);
+      });
     } else {
       setSyncStatus("pending");
     }
@@ -273,11 +230,9 @@ export default function App() {
     setTasks((prev) => prev.filter((t) => t.id !== id));
     await deleteTaskLocally(id);
     if (isOnline) {
-      try {
-        await deleteTodo(id);
-      } catch (err) {
-        console.error("Online delete failed", err);
-      }
+      syncPendingTasks(userEmail).then((res) => {
+        if (res.success && res.tasks) setTasks(res.tasks);
+      });
     } else {
       setSyncStatus("pending");
     }

@@ -1,7 +1,8 @@
 import { getPendingTasks, markTaskSynced, removeLocalTask, saveTasksLocally, getLocalNote, saveNoteLocally } from "./db";
 import { createTodo, updateTodo, deleteTodo, fetchTodos, saveNotesToBackend } from "./api";
 
-export const syncPendingTasks = async (userEmail) => {
+// 🚀 UNIFIED SYNC & FETCH DAEMON
+public const syncPendingTasks = async (userEmail) => {
   // --- PART A: SYNC NOTES ---
   try {
     const localNote = await getLocalNote(userEmail);
@@ -12,10 +13,10 @@ export const syncPendingTasks = async (userEmail) => {
       await saveNoteLocally(userEmail, localNote.notes);
     }
   } catch (noteErr) {
-    console.error("Notes sync halted:", noteErr);
+    console.error("Notes sync execution halted:", noteErr);
   }
 
-  // --- PART B: SYNC TASKS ---
+  // --- PART B: SYNC PENDING TASK QUEUES ---
   const pending = await getPendingTasks();
   
   for (const task of pending) {
@@ -40,20 +41,22 @@ export const syncPendingTasks = async (userEmail) => {
         }
       }
     } catch (err) {
-      console.error("Failed to sync task:", task.id, err);
+      console.error("Failed to sync individual offline task:", task.id, err);
     }
   }
 
-  // --- PART C: UNIFIED CLOUD RECONCILIATION ---
+  // --- PART C: FETCH CLEAN DATA STREAM FROM CLOUD ---
   try {
     const res = await fetchTodos();
     if (res.ok) {
       const serverTasks = await res.json();
+      // Overwrite local database cache with absolute truth
       await saveTasksLocally(serverTasks, userEmail);
-      return { tasks: serverTasks };
+      return { success: true, tasks: serverTasks };
     }
   } catch (err) {
-    console.error("Post-sync pull failed:", err);
+    console.error("Cloud data pull failed:", err);
   }
-  return { tasks: null };
+  
+  return { success: false, tasks: null };
 };
