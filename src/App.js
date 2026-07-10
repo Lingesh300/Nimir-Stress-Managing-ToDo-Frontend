@@ -1,7 +1,6 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import {
   getLocalTasks,
-  saveTasksLocally,
   addTaskLocally,
   updateTaskLocally,
   deleteTaskLocally,
@@ -32,49 +31,64 @@ export default function App() {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [syncStatus, setSyncStatus] = useState("synced");
 
-  // ===== INITIAL LAYOUT MOUNT & HYDRATION ENGINE =====
-  const hydrateApp = useCallback(async () => {
-    setLoading(true);
-    // 1. Immediately render local cached copy (Instant interface load)
-    const localTasks = await getLocalTasks(userEmail);
-    setTasks(localTasks.filter(t => t.syncStatus !== "pending-delete"));
+  // ===== SINGLE SOURCE OF TRUTH FOR NETWORK SYNC =====
+  // Every place that needs the server updated calls this. It is the
+  // ONLY function that talks to syncPendingTasks. Nothing else in this
+  // file calls createTodo/updateTodo/deleteTodo/fetchTodos directly —
+  // that's what caused duplicate tasks before (two code paths were
+  // independently POSTing the same task).
+  const runSync = useCallback(async () => {
+    if (!navigator.onLine) {
+      setSyncStatus("pending");
+      return;
+    }
 
-    // 2. Trigger sync daemon to reconcile background lists safely
-    if (navigator.onLine) {
-      setSyncStatus("syncing");
+    setSyncStatus("syncing");
+    try {
       const result = await syncPendingTasks(userEmail);
-      if (result.success && result.tasks) {
+
+      if (result && result.success && result.tasks) {
         setTasks(result.tasks);
         setSyncStatus("synced");
       } else {
-        setSyncStatus("pending");
+        // Sync was busy (another call already in flight) or it failed.
+        // Either way, re-read IndexedDB so the UI reflects whatever the
+        // local write layer already has, instead of going stale until
+        // the next unrelated sync happens to fire.
+        const fallbackLocal = await getLocalTasks(userEmail);
+        setTasks(fallbackLocal.filter((t) => t.syncStatus !== "pending-delete"));
+        setSyncStatus(result && result.busy ? "synced" : "pending");
       }
-    } else {
+    } catch (err) {
+      console.error("Sync runtime execution failure:", err);
       setSyncStatus("pending");
     }
-    setLoading(false);
   }, [userEmail]);
 
-  useEffect(() => {
-    if (token && userEmail) hydrateApp();
-  }, [token, userEmail, hydrateApp]);
+  // ===== INITIAL LOAD =====
+  const initialLoad = useCallback(async () => {
+    setLoading(true);
 
-  // ===== NETWORK STATUS INTERACTION MUTATORS =====
+    // 1. Instant paint from local cache
+    const localTasks = await getLocalTasks(userEmail);
+    setTasks(localTasks.filter((t) => t.syncStatus !== "pending-delete"));
+    setLoading(false);
+
+    // 2. Reconcile with server (this is the ONLY network call on load)
+    await runSync();
+  }, [userEmail, runSync]);
+
   useEffect(() => {
-    const handleOnline = async () => {
+    if (token && userEmail) initialLoad();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, userEmail]);
+
+  // ===== NETWORK STATUS =====
+  useEffect(() => {
+    const handleOnline = () => {
       setIsOnline(true);
-      setSyncStatus("syncing");
-      const result = await syncPendingTasks(userEmail);
-      if (result.success && result.tasks) {
-        setTasks(result.tasks);
-        setSyncStatus("synced");
-      } else {
-        const currentLocal = await getLocalTasks(userEmail);
-        setTasks(currentLocal.filter(t => t.syncStatus !== "pending-delete"));
-        setSyncStatus("pending");
-      }
+      runSync();
     };
-
     const handleOffline = () => {
       setIsOnline(false);
       setSyncStatus("pending");
@@ -86,7 +100,7 @@ export default function App() {
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", handleOffline);
     };
-  }, [userEmail]);
+  }, [runSync]);
 
   // ===== DARK MODE =====
   useEffect(() => {
@@ -94,7 +108,7 @@ export default function App() {
     localStorage.setItem("darkMode", darkMode);
   }, [darkMode]);
 
-  // ===== 30-SEC LAPTOP NOTIFICATION ENGINE =====
+  // ===== NOTIFICATIONS =====
   useEffect(() => {
     if ("Notification" in window && Notification.permission === "default") {
       Notification.requestPermission();
@@ -112,7 +126,8 @@ export default function App() {
       const systemMinutes = now.getMinutes();
 
       tasks.forEach((task) => {
-        if (task.isCompleted || !task.time || !task.date || task.date !== currentDate) return;
+        if (task.isCompleted || !task.time || !task.date || task.date !== currentDate)
+          return;
 
         let taskHours = 0;
         let taskMinutes = 0;
@@ -139,7 +154,7 @@ export default function App() {
             body: `${task.title} — ${task.priority?.toUpperCase() || ""} priority`,
             icon: "/favicon.ico",
             tag: `task-${task.id}-${taskHours}:${taskMinutes}`,
-            requireInteraction: true
+            requireInteraction: true,
           });
         }
       });
@@ -148,7 +163,7 @@ export default function App() {
     return () => clearInterval(interval);
   }, [tasks, token]);
 
-  // ===== AUTHENTICATION =====
+  // ===== AUTH =====
   const handleLogout = () => {
     localStorage.removeItem("token");
     localStorage.removeItem("userEmail");
@@ -164,11 +179,23 @@ export default function App() {
     setUserEmail(email);
   };
 
-  const openAddModal = () => { setEditingTask(null); setIsModalOpen(true); };
-  const openEditModal = (task) => { setEditingTask(task); setIsModalOpen(true); };
+  const openAddModal = () => {
+    setEditingTask(null);
+    setIsModalOpen(true);
+  };
+  const openEditModal = (task) => {
+    setEditingTask(task);
+    setIsModalOpen(true);
+  };
   const handleCloseModal = () => setIsModalOpen(false);
 
-  // ===== RUNTIME ELEMENT WORKFLOW OPERATIONS =====
+  // ===== TASK OPERATIONS =====
+  // All three of these follow the same pattern:
+  // 1. Write to IndexedDB with a "pending-*" status (via db.js)
+  // 2. Optimistically update React state so the UI feels instant
+  // 3. Call runSync() to let sync.js push it to the server exactly once
+  // They never call the API (createTodo/updateTodo/deleteTodo) themselves.
+
   const saveTask = async (data) => {
     setIsModalOpen(false);
 
@@ -178,15 +205,6 @@ export default function App() {
 
       setTasks((prev) => prev.map((t) => (t.id === originalId ? updated : t)));
       await updateTaskLocally(updated);
-
-      if (isOnline) {
-        // Safe dispatch: let the background daemon trigger reconciliation cleanly
-        syncPendingTasks(userEmail).then((res) => {
-          if (res.success && res.tasks) setTasks(res.tasks);
-        });
-      } else {
-        setSyncStatus("pending");
-      }
     } else {
       const tempId = `local-${Date.now()}`;
       const newTask = {
@@ -199,46 +217,28 @@ export default function App() {
 
       setTasks((prev) => [...prev, newTask]);
       await addTaskLocally(newTask, userEmail);
-
-      if (isOnline) {
-        syncPendingTasks(userEmail).then((res) => {
-          if (res.success && res.tasks) setTasks(res.tasks);
-        });
-      } else {
-        setSyncStatus("pending");
-      }
     }
+
+    await runSync();
   };
 
   const toggleComplete = async (task) => {
-    const originalId = task.id;
     const updated = { ...task, isCompleted: !task.isCompleted, userEmail };
 
-    setTasks((prev) => prev.map((t) => (t.id === originalId ? updated : t)));
+    setTasks((prev) => prev.map((t) => (t.id === task.id ? updated : t)));
     await updateTaskLocally(updated);
 
-    if (isOnline) {
-      syncPendingTasks(userEmail).then((res) => {
-        if (res.success && res.tasks) setTasks(res.tasks);
-      });
-    } else {
-      setSyncStatus("pending");
-    }
+    await runSync();
   };
 
   const deleteTask = async (id) => {
     setTasks((prev) => prev.filter((t) => t.id !== id));
     await deleteTaskLocally(id);
-    if (isOnline) {
-      syncPendingTasks(userEmail).then((res) => {
-        if (res.success && res.tasks) setTasks(res.tasks);
-      });
-    } else {
-      setSyncStatus("pending");
-    }
+
+    await runSync();
   };
 
-  // ===== SORTING ENGINE =====
+  // ===== SORTING =====
   const priorityOrder = { high: 1, medium: 2, low: 3 };
   const isOverdue = (task) => !task.isCompleted && task.date && task.date < today;
 
