@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback } from "react";
 import {
   getLocalTasks,
   addTaskLocally,
@@ -45,19 +45,19 @@ export default function App() {
 
     setSyncStatus("syncing");
     try {
+      // syncPendingTasks now queues internally instead of dropping a call
+      // that arrives while one is already in flight — so every call here
+      // is guaranteed to reflect the latest local edits, not a stale
+      // snapshot from before your last save.
       const result = await syncPendingTasks(userEmail);
 
       if (result && result.success && result.tasks) {
         setTasks(result.tasks);
         setSyncStatus("synced");
       } else {
-        // Sync was busy (another call already in flight) or it failed.
-        // Either way, re-read IndexedDB so the UI reflects whatever the
-        // local write layer already has, instead of going stale until
-        // the next unrelated sync happens to fire.
         const fallbackLocal = await getLocalTasks(userEmail);
         setTasks(fallbackLocal.filter((t) => t.syncStatus !== "pending-delete"));
-        setSyncStatus(result && result.busy ? "synced" : "pending");
+        setSyncStatus("pending");
       }
     } catch (err) {
       console.error("Sync runtime execution failure:", err);
@@ -200,15 +200,37 @@ export default function App() {
     setIsModalOpen(false);
 
     if (editingTask) {
-      const originalId = editingTask.id;
-      const updated = { ...editingTask, ...data, userEmail };
+      // IMPORTANT: editingTask was captured when the modal opened. If a
+      // background sync finished in the meantime, the task's real `id`
+      // may have changed (local-xxxx -> the server's id). Saving against
+      // the old id would silently recreate a deleted IndexedDB row —
+      // that's what was causing duplicates. So we always re-resolve to
+      // the CURRENT copy of this task by its stable clientId first.
+      const current =
+        tasks.find(
+          (t) => t.clientId && editingTask.clientId && t.clientId === editingTask.clientId
+        ) ||
+        tasks.find((t) => t.id === editingTask.id) ||
+        editingTask;
 
-      setTasks((prev) => prev.map((t) => (t.id === originalId ? updated : t)));
-      await updateTaskLocally(updated);
+      const updated = { ...current, ...data, userEmail };
+
+      setTasks((prev) => prev.map((t) => (t.id === current.id ? updated : t)));
+      const result = await updateTaskLocally(updated);
+      if (!result) {
+        // The local row genuinely didn't exist (edge case) — don't write
+        // a phantom row. Just re-sync to pull the real current state.
+        await runSync();
+        return;
+      }
     } else {
       const tempId = `local-${Date.now()}`;
+      const clientId =
+        (crypto.randomUUID && crypto.randomUUID()) ||
+        `c-${Date.now()}-${Math.random().toString(16).slice(2)}`;
       const newTask = {
         id: tempId,
+        clientId,
         isCompleted: false,
         userEmail,
         syncStatus: "pending-add",
@@ -223,10 +245,18 @@ export default function App() {
   };
 
   const toggleComplete = async (task) => {
-    const updated = { ...task, isCompleted: !task.isCompleted, userEmail };
+    const current =
+      tasks.find((t) => t.clientId && task.clientId && t.clientId === task.clientId) ||
+      tasks.find((t) => t.id === task.id) ||
+      task;
+    const updated = { ...current, isCompleted: !current.isCompleted, userEmail };
 
-    setTasks((prev) => prev.map((t) => (t.id === task.id ? updated : t)));
-    await updateTaskLocally(updated);
+    setTasks((prev) => prev.map((t) => (t.id === current.id ? updated : t)));
+    const result = await updateTaskLocally(updated);
+    if (!result) {
+      await runSync();
+      return;
+    }
 
     await runSync();
   };

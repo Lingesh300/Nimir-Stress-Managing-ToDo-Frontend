@@ -12,7 +12,7 @@ const openDB = () => {
 
     request.onupgradeneeded = (event) => {
       const dbInstance = event.target.result;
-      
+
       // Handle Tasks Object Store
       if (!dbInstance.objectStoreNames.contains(STORE_NAME)) {
         const store = dbInstance.createObjectStore(STORE_NAME, { keyPath: "id" });
@@ -94,20 +94,37 @@ export const addTaskLocally = async (task, userEmail) => {
 };
 
 // update task locally
+// Returns the updated record on success, or null if the record didn't
+// exist (this used to silently `put()` a brand-new row under a stale id
+// and resurrect tasks that had already been deleted/migrated during a
+// sync — that was the source of the duplicate-on-edit bug).
 export const updateTaskLocally = async (task) => {
   const db = await openDB();
   const tx = db.transaction(STORE_NAME, "readwrite");
   const store = tx.objectStore(STORE_NAME);
 
-  const updated = {
-    ...task,
-    syncStatus: task.syncStatus === "synced" ? "pending-update" : task.syncStatus,
-  };
-
   return new Promise((resolve, reject) => {
-    const request = store.put(updated);
-    request.onsuccess = () => resolve(updated);
-    request.onerror = () => reject(request.error);
+    const getRequest = store.get(task.id);
+    getRequest.onsuccess = () => {
+      const existing = getRequest.result;
+      if (!existing) {
+        console.warn(
+          `updateTaskLocally: no local row for id "${task.id}" — skipping write to avoid recreating a deleted/migrated task.`
+        );
+        resolve(null);
+        return;
+      }
+
+      const updated = {
+        ...task,
+        syncStatus: existing.syncStatus === "synced" ? "pending-update" : existing.syncStatus,
+      };
+
+      const putRequest = store.put(updated);
+      putRequest.onsuccess = () => resolve(updated);
+      putRequest.onerror = () => reject(putRequest.error);
+    };
+    getRequest.onerror = () => reject(getRequest.error);
   });
 };
 
@@ -171,7 +188,7 @@ export const markTaskSynced = async (localId, serverId) => {
       if (task) {
         store.delete(localId);
         store.put({
-          ...task,
+          ...task, // clientId (if present) carries over automatically
           id: serverId || localId,
           syncStatus: "synced",
         });
@@ -200,14 +217,14 @@ export const saveNoteLocally = async (userEmail, notesText) => {
   const db = await openDB();
   const tx = db.transaction(NOTES_STORE_NAME, "readwrite");
   const store = tx.objectStore(NOTES_STORE_NAME);
-  
+
   const record = {
     userEmail,
     notes: notesText,
     syncStatus: "pending-update",
-    updatedAt: Date.now()
+    updatedAt: Date.now(),
   };
-  
+
   return new Promise((resolve, reject) => {
     store.put(record);
     tx.oncomplete = () => resolve();
@@ -219,7 +236,7 @@ export const getLocalNote = async (userEmail) => {
   const db = await openDB();
   const tx = db.transaction(NOTES_STORE_NAME, "readonly");
   const store = tx.objectStore(NOTES_STORE_NAME);
-  
+
   return new Promise((resolve, reject) => {
     const request = store.get(userEmail);
     request.onsuccess = () => resolve(request.result || null);
