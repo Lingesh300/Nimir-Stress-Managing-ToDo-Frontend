@@ -4,8 +4,22 @@ import {
   addTaskLocally,
   updateTaskLocally,
   deleteTaskLocally,
+  setTaskSyncedLocally,
+  markTaskSynced,
+  removeLocalTask,
 } from "./db";
 import { syncPendingTasks } from "./sync";
+import { createTodo, updateTodo, deleteTodo } from "./api";
+
+// These three are the ONLY place outside sync.js that call the API
+// directly, and only for the "instant online" fast path below. The
+// rule that matters is: a task must only ever be POSTed/PUT/DELETEd
+// once. That's guaranteed here because the moment one of these calls
+// succeeds, the row is immediately flipped to "synced" in IndexedDB —
+// so it can never show up in getPendingTasks() and sync.js's queue
+// will never touch it again. If we're offline, or this call fails,
+// the row is simply left "pending" and sync.js picks it up on the
+// next reconnect — never both paths for the same task.
 import Sidebar from "./Sidebar";
 import TaskList from "./TaskList";
 import FloatingAddButton from "./FloatingAddButton";
@@ -31,12 +45,14 @@ export default function App() {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [syncStatus, setSyncStatus] = useState("synced");
 
-  // ===== SINGLE SOURCE OF TRUTH FOR NETWORK SYNC =====
-  // Every place that needs the server updated calls this. It is the
-  // ONLY function that talks to syncPendingTasks. Nothing else in this
-  // file calls createTodo/updateTodo/deleteTodo/fetchTodos directly —
-  // that's what caused duplicate tasks before (two code paths were
-  // independently POSTing the same task).
+  // ===== FULL RECONCILE / OFFLINE-QUEUE FLUSH =====
+  // This is now only used for: (1) initial load, so we start from the
+  // server's true state, and (2) the moment we come back online, to
+  // flush whatever piled up in IndexedDB while offline. Individual
+  // add/edit/toggle/delete actions no longer call this while online —
+  // they push themselves directly and instantly (see saveTask /
+  // toggleComplete / deleteTask below) instead of waiting on a full
+  // queue-processing pass every single click.
   const runSync = useCallback(async () => {
     if (!navigator.onLine) {
       setSyncStatus("pending");
@@ -200,12 +216,8 @@ export default function App() {
     setIsModalOpen(false);
 
     if (editingTask) {
-      // IMPORTANT: editingTask was captured when the modal opened. If a
-      // background sync finished in the meantime, the task's real `id`
-      // may have changed (local-xxxx -> the server's id). Saving against
-      // the old id would silently recreate a deleted IndexedDB row —
-      // that's what was causing duplicates. So we always re-resolve to
-      // the CURRENT copy of this task by its stable clientId first.
+      // Re-resolve to the CURRENT copy by clientId (see comment above on
+      // why editingTask's captured id can go stale).
       const current =
         tasks.find(
           (t) => t.clientId && editingTask.clientId && t.clientId === editingTask.clientId
@@ -215,14 +227,32 @@ export default function App() {
 
       const updated = { ...current, ...data, userEmail };
 
+      // 1. Instant optimistic UI + local cache write — happens the same
+      //    way whether we're online or offline.
       setTasks((prev) => prev.map((t) => (t.id === current.id ? updated : t)));
-      const result = await updateTaskLocally(updated);
-      if (!result) {
-        // The local row genuinely didn't exist (edge case) — don't write
-        // a phantom row. Just re-sync to pull the real current state.
+      const localResult = await updateTaskLocally(updated);
+      if (!localResult) {
         await runSync();
         return;
       }
+
+      // 2. Online: push just this one change immediately. No loop over
+      //    other pending tasks, no full re-fetch — just this row.
+      if (navigator.onLine) {
+        try {
+          const res = await updateTodo(localResult);
+          if (res.ok) {
+            const cleaned = await setTaskSyncedLocally(localResult);
+            setTasks((prev) => prev.map((t) => (t.id === cleaned.id ? cleaned : t)));
+            return;
+          }
+        } catch (err) {
+          console.error("Instant update failed, will retry on next sync:", err);
+        }
+      }
+      // Offline, or the instant attempt failed: it stays "pending-update"
+      // in IndexedDB (already set by updateTaskLocally) and will be
+      // flushed automatically next time we're online.
     } else {
       const tempId = `local-${Date.now()}`;
       const clientId =
@@ -239,9 +269,29 @@ export default function App() {
 
       setTasks((prev) => [...prev, newTask]);
       await addTaskLocally(newTask, userEmail);
-    }
 
-    await runSync();
+      if (navigator.onLine) {
+        try {
+          const { id, syncStatus, ...payload } = newTask;
+          const res = await createTodo({ ...payload, userEmail });
+          if (res.ok) {
+            const saved = await res.json();
+            // Atomically swaps local-xxxx -> the real server id and
+            // carries clientId over.
+            await markTaskSynced(tempId, saved.id);
+            setTasks((prev) =>
+              prev.map((t) =>
+                t.id === tempId ? { ...saved, clientId, syncStatus: "synced" } : t
+              )
+            );
+            return;
+          }
+        } catch (err) {
+          console.error("Instant create failed, will retry on next sync:", err);
+        }
+      }
+      // Offline, or failed: stays "pending-add", flushed on reconnect.
+    }
   };
 
   const toggleComplete = async (task) => {
@@ -252,20 +302,49 @@ export default function App() {
     const updated = { ...current, isCompleted: !current.isCompleted, userEmail };
 
     setTasks((prev) => prev.map((t) => (t.id === current.id ? updated : t)));
-    const result = await updateTaskLocally(updated);
-    if (!result) {
+    const localResult = await updateTaskLocally(updated);
+    if (!localResult) {
       await runSync();
       return;
     }
 
-    await runSync();
+    if (navigator.onLine) {
+      try {
+        const res = await updateTodo(localResult);
+        if (res.ok) {
+          const cleaned = await setTaskSyncedLocally(localResult);
+          setTasks((prev) => prev.map((t) => (t.id === cleaned.id ? cleaned : t)));
+          return;
+        }
+      } catch (err) {
+        console.error("Instant toggle failed, will retry on next sync:", err);
+      }
+    }
+    // Offline, or failed: stays "pending-update", flushed on reconnect.
   };
 
   const deleteTask = async (id) => {
+    const isLocalOnly = String(id).startsWith("local-") || String(id).startsWith("temp-");
+
     setTasks((prev) => prev.filter((t) => t.id !== id));
     await deleteTaskLocally(id);
+    // If it was local-only (never synced), deleteTaskLocally already
+    // fully removed it — nothing left to push anywhere.
+    if (isLocalOnly) return;
 
-    await runSync();
+    if (navigator.onLine) {
+      try {
+        const res = await deleteTodo(id);
+        if (res.ok) {
+          await removeLocalTask(id);
+          return;
+        }
+      } catch (err) {
+        console.error("Instant delete failed, will retry on next sync:", err);
+      }
+    }
+    // Offline, or failed: stays "pending-delete" (already hidden from the
+    // UI by the filteredTasks filter below) and gets flushed on reconnect.
   };
 
   // ===== SORTING =====

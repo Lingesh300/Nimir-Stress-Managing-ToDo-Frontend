@@ -128,6 +128,22 @@ export const updateTaskLocally = async (task) => {
   });
 };
 
+// mark a single row clean/synced directly — used by the "instant online"
+// path in App.js after a direct API call succeeds, so that task never
+// enters the pending queue and sync.js will never re-send it.
+export const setTaskSyncedLocally = async (task) => {
+  const db = await openDB();
+  const tx = db.transaction(STORE_NAME, "readwrite");
+  const store = tx.objectStore(STORE_NAME);
+  const clean = { ...task, syncStatus: "synced" };
+
+  return new Promise((resolve, reject) => {
+    const request = store.put(clean);
+    request.onsuccess = () => resolve(clean);
+    request.onerror = () => reject(request.error);
+  });
+};
+
 // delete task locally
 export const deleteTaskLocally = async (id) => {
   const db = await openDB();
